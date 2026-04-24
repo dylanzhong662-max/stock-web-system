@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>截图导入 · 港美股管理</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --blue-brand: #1456F0;
+  --blue-act:   #3370FF;
+  --blue-light: #EEF3FF;
+  --blue-mid:   #C2D1FF;
+  --bg:         #F5F6F8;
+  --card:       #FFFFFF;
+  --border:     #E0E3EA;
+  --border-2:   #F0F1F4;
+  --text:       #1D2129;
+  --text-2:     #4E5969;
+  --text-3:     #8D93A5;
+  --green:      #00B42A;
+  --green-bg:   #E8F7EB;
+  --red:        #F53F3F;
+  --red-bg:     #FFECE8;
+  --orange:     #FF7D00;
+  --orange-bg:  #FFF3E8;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  min-height: 100vh;
+}
+
+/* ── Header ── */
+.app-header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.header-left { display: flex; align-items: center; gap: 8px; }
+.header-logo {
+  width: 28px; height: 28px;
+  background: var(--blue-brand);
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+}
+.header-logo svg { width: 15px; height: 15px; fill: #fff; }
+.header-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.header-back {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 13px; color: var(--blue-act);
+  text-decoration: none;
+}
+.header-back svg { width: 16px; height: 16px; fill: var(--blue-act); }
+
+/* ── Steps ── */
+.steps-bar {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  overflow-x: auto;
+}
+.step {
+  display: flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.step-num {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700;
+  background: var(--border); color: var(--text-3);
+  flex-shrink: 0;
+  transition: all .2s;
+}
+.step-label { font-size: 12px; color: var(--text-3); transition: color .2s; }
+.step.active .step-num  { background: var(--blue-act); color: #fff; }
+.step.active .step-label { color: var(--blue-act); font-weight: 600; }
+.step.done .step-num    { background: var(--green); color: #fff; }
+.step.done .step-label  { color: var(--green); }
+.step-line {
+  width: 24px; height: 1px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+.step-line.done { background: var(--green); }
+
+/* ── Page content ── */
+.content { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+/* ── Upload zone ── */
+.upload-zone {
+  border: 2px dashed var(--blue-mid);
+  border-radius: 12px;
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--blue-light);
+  margin-bottom: 16px;
+  transition: border-color .18s, background .18s;
+  position: relative;
+}
+.upload-zone:active,
+.upload-zone.dragover {
+  border-color: var(--blue-act);
+  background: #E0EAFF;
+}
+.upload-zone-icon {
+  width: 48px; height: 48px;
+  background: var(--card);
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 12px;
+  box-shadow: 0 2px 8px rgba(51,112,255,.12);
+}
+.upload-zone-icon svg { width: 24px; height: 24px; fill: var(--blue-act); }
+.upload-zone-text { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.upload-zone-hint { font-size: 12px; color: var(--text-3); }
+#file-input { display: none; }
+
+/* ── Previews ── */
+#preview-section { display: none; margin-bottom: 16px; }
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+}
+.preview-item { position: relative; }
+.preview-item img {
+  width: 100%; height: 80px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  display: block;
+}
+.preview-item .remove-btn {
+  position: absolute; top: 4px; right: 4px;
+  width: 20px; height: 20px;
+  background: rgba(29,33,41,.65);
+  color: #fff;
+  border: none; border-radius: 50%;
+  font-size: 12px; line-height: 20px;
+  text-align: center; cursor: pointer; padding: 0;
+}
+.preview-count {
+  font-size: 12px; color: var(--text-3); margin-top: 6px;
+  text-align: center;
+}
+
+/* ── Status ── */
+#status {
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+.status-loading { background: var(--blue-light); color: var(--blue-act); display: flex !important; }
+.status-error   { background: var(--red-bg);    color: #C9211E;          display: flex !important; }
+.status-success { background: var(--green-bg);  color: #077520;          display: flex !important; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.status-loading .status-dot { background: var(--blue-act); animation: pulse 1s infinite; }
+.status-error   .status-dot { background: var(--red); }
+.status-success .status-dot { background: var(--green); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ── Buttons ── */
+.btn-full {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%;
+  padding: 14px;
+  border-radius: 10px;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s, background .15s;
+  margin-bottom: 10px;
+}
+.btn-full:active { opacity: .85; }
+.btn-full:disabled { opacity: .4; cursor: not-allowed; }
+.btn-full svg { width: 17px; height: 17px; }
+.btn-primary { background: var(--blue-act); color: #fff; }
+.btn-secondary {
+  background: var(--card);
+  color: var(--text-2);
+  border: 1px solid var(--border) !important;
+  border-radius: 10px;
+}
+.btn-green { background: var(--green); color: #fff; }
+
+/* ── Position cards ── */
+#results { display: none; }
+
+.section-label {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: .06em;
+  margin-bottom: 10px; margin-top: 20px;
+}
+
+.pos-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  border-left: 3px solid var(--blue-act);
+}
+.pos-card-top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.pos-name { font-size: 15px; font-weight: 700; }
+.pos-meta { font-size: 12px; color: var(--text-3); margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+.dir-badge {
+  font-size: 11px; font-weight: 700;
+  padding: 2px 8px; border-radius: 4px;
+}
+.dir-long  { background: var(--green-bg); color: var(--green); }
+.dir-short { background: var(--red-bg);   color: var(--red); }
+
+.pos-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+@media (max-width: 360px) { .pos-grid { grid-template-columns: 1fr 1fr; } }
+.pos-field {}
+.field-label { font-size: 10px; color: var(--text-3); margin-bottom: 2px; }
+.field-value { font-size: 13px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+.pnl-pos { color: var(--green); }
+.pnl-neg { color: var(--red); }
+
+/* ── Action buttons (row) ── */
+.action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+  margin-bottom: 6px;
+}
+
+/* ── Save confirm ── */
+.save-confirm {
+  background: var(--green-bg);
+  border: 1px solid #B7EBC1;
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 13px;
+  color: #077520;
+  display: none;
+  margin-bottom: 16px;
+}
+.save-confirm-detail {
+  margin-top: 8px; font-size: 12px; line-height: 1.8;
+  display: flex; flex-wrap: wrap; gap: 4px 10px;
+}
+
+/* ── Advice section ── */
+.advice-summary-box {
+  background: var(--blue-light);
+  border: 1px solid var(--blue-mid);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+  margin-bottom: 12px;
+}
+
+.advice-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  border-left: 3px solid var(--border);
+}
+.advice-card.urgency-urgent { border-left-color: var(--red); }
+.advice-card.urgency-normal { border-left-color: var(--orange); }
+.advice-card.urgency-low    { border-left-color: var(--blue-mid); }
+.advice-hd {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px;
+}
+.advice-asset { font-size: 14px; font-weight: 700; }
+.advice-ticker { font-size: 11px; color: var(--text-3); margin-left: 5px; font-family: 'JetBrains Mono', monospace; }
+.advice-action-badge {
+  font-size: 11px; font-weight: 700;
+  padding: 3px 10px; border-radius: 4px;
+}
+.act-hold  { background: var(--blue-light); color: var(--blue-act); }
+.act-buy   { background: var(--green-bg); color: var(--green); }
+.act-sell  { background: var(--red-bg); color: var(--red); }
+.act-watch { background: var(--orange-bg); color: var(--orange); }
+.advice-reason { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+
+.risk-item {
+  background: var(--orange-bg);
+  border-left: 3px solid var(--orange);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  font-size: 12px; color: #B85C00;
+}
+
+/* ── Spinner ── */
+.spinner {
+  display: inline-block; width: 15px; height: 15px;
+  border: 2px solid rgba(255,255,255,.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  flex-shrink: 0;
+}
+.spinner-blue {
+  border-color: rgba(51,112,255,.25);
+  border-top-color: var(--blue-act);
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Bottom safe area padding ── */
+.bottom-safe { height: env(safe-area-inset-bottom, 16px); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="app-header">
+  <div class="header-left">
+    <div class="header-logo">
+      <svg viewBox="0 0 24 24"><path d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    </div>
+    <span class="header-title">截图导入</span>
+  </div>
+  <a class="header-back" href="/">
+    <svg viewBox="0 0 24 24"><path d="M3 12l9-9 1.41 1.41L6.83 11H21v2H6.83l6.58 6.59L12 21z"/></svg>
+    仪表盘
+  </a>
+</header>
+
+<!-- Steps -->
+<div class="steps-bar">
+  <div class="step active" id="step-1">
+    <div class="step-num">1</div>
+    <div class="step-label">上传截图</div>
+  </div>
+  <div class="step-line" id="line-1"></div>
+  <div class="step" id="step-2">
+    <div class="step-num">2</div>
+    <div class="step-label">解析持仓</div>
+  </div>
+  <div class="step-line" id="line-2"></div>
+  <div class="step" id="step-3">
+    <div class="step-num">3</div>
+    <div class="step-label">调仓建议</div>
+  </div>
+  <div class="step-line" id="line-3"></div>
+  <div class="step" id="step-4">
+    <div class="step-num">4</div>
+    <div class="step-label">保存</div>
+  </div>
+</div>
+
+<!-- Content -->
+<div class="content">
+
+  <!-- Upload zone -->
+  <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
+    <div class="upload-zone-icon">
+      <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+    </div>
+    <div class="upload-zone-text">点击选择截图</div>
+    <div class="upload-zone-hint">支持 JPG / PNG / WEBP · 最多 10 张 · 每张 10MB 以内</div>
+  </div>
+  <input type="file" id="file-input" accept="image/*" multiple>
+
+  <!-- Previews -->
+  <div id="preview-section">
+    <div class="preview-grid" id="preview-grid"></div>
+    <div class="preview-count" id="preview-count"></div>
+  </div>
+
+  <!-- Status -->
+  <div id="status">
+    <div class="status-dot"></div>
+    <span id="status-text"></span>
+  </div>
+
+  <!-- Parse button -->
+  <button class="btn-full btn-primary" id="parse-btn" disabled>
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
+    解析持仓截图
+  </button>
+
+  <!-- Results -->
+  <div id="results">
+
+    <!-- Positions -->
+    <div class="section-label">识别到的持仓</div>
+    <div id="positions-list"></div>
+
+    <!-- Action row -->
+    <div class="action-row">
+      <button class="btn-full btn-primary" id="advice-btn" style="margin-bottom:0">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+        获取建议
+      </button>
+      <button class="btn-full btn-secondary" id="save-btn" style="margin-bottom:0">
+        <svg viewBox="0 0 24 24" fill="var(--green)"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7l-4-4zm-5 16a3 3 0 110-6 3 3 0 010 6zm3-10H5V5h10v4z"/></svg>
+        保存持仓
+      </button>
+    </div>
+
+    <!-- Save confirm -->
+    <div class="save-confirm" id="save-confirm">
+      <strong>持仓已保存</strong>
+      <div class="save-confirm-detail" id="save-confirm-detail"></div>
+    </div>
+
+    <!-- Advice section -->
+    <div id="advice-section" style="display:none">
+      <div class="section-label" style="margin-top:20px">AI 调仓建议</div>
+      <div id="summary-box" class="advice-summary-box" style="display:none"></div>
+      <div id="advice-list"></div>
+      <div id="risk-section" style="display:none">
+        <div class="section-label">风险提示</div>
+        <div id="risk-list"></div>
+      </div>
+    </div>
+
+  </div><!-- /results -->
+
+  <div class="bottom-safe"></div>
+</div>
+
+<script>
+let parsedPositions = [];
+let selectedFiles = [];
+
+// ── Steps ──────────────────────────────────────────────────────────────────────
+function setStep(n) {
+  for (let i = 1; i <= 4; i++) {
+    const s = document.getElementById('step-' + i);
+    s.classList.remove('active','done');
+    if (i < n)  s.classList.add('done');
+    if (i === n) s.classList.add('active');
+  }
+  for (let i = 1; i <= 3; i++) {
+    const l = document.getElementById('line-' + i);
+    l.classList.toggle('done', i < n);
+  }
+}
+
+// ── Previews ──────────────────────────────────────────────────────────────────
+function renderPreviews() {
+  const grid  = document.getElementById('preview-grid');
+  const count = document.getElementById('preview-count');
+  const sec   = document.getElementById('preview-section');
+  if (!selectedFiles.length) {
+    sec.style.display = 'none';
+    document.getElementById('parse-btn').disabled = true;
+    return;
+  }
+  sec.style.display = 'block';
+  document.getElementById('parse-btn').disabled = false;
+  count.textContent = `已选 ${selectedFiles.length} 张，点击 × 可移除`;
+  grid.innerHTML = '';
+  selectedFiles.forEach((file, i) => {
+    const reader = new FileReader();
+    const item = document.createElement('div');
+    item.className = 'preview-item';
+    item.innerHTML = `<img alt="图${i+1}"><button class="remove-btn" onclick="removeFile(${i})">×</button>`;
+    reader.onload = ev => item.querySelector('img').src = ev.target.result;
+    reader.readAsDataURL(file);
+    grid.appendChild(item);
+  });
+}
+
+function removeFile(idx) {
+  selectedFiles.splice(idx, 1);
+  renderPreviews();
+  hideStatus();
+  document.getElementById('results').style.display = 'none';
+  setStep(1);
+}
+
+// ── File input ────────────────────────────────────────────────────────────────
+document.getElementById('file-input').addEventListener('change', function(e) {
+  const seen = new Set(selectedFiles.map(f => f.name + f.size));
+  Array.from(e.target.files).forEach(f => {
+    if (!seen.has(f.name + f.size) && selectedFiles.length < 10) {
+      selectedFiles.push(f); seen.add(f.name + f.size);
+    }
+  });
+  this.value = '';
+  renderPreviews();
+  hideStatus();
+  document.getElementById('results').style.display = 'none';
+  setStep(1);
+});
+
+// Drag & drop
+const zone = document.getElementById('upload-zone');
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+zone.addEventListener('drop', e => {
+  e.preventDefault(); zone.classList.remove('dragover');
+  const seen = new Set(selectedFiles.map(f => f.name + f.size));
+  Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')).forEach(f => {
+    if (!seen.has(f.name + f.size) && selectedFiles.length < 10) {
+      selectedFiles.push(f); seen.add(f.name + f.size);
+    }
+  });
+  renderPreviews(); hideStatus();
+  document.getElementById('results').style.display = 'none';
+});
+
+// ── Parse ──────────────────────────────────────────────────────────────────────
+document.getElementById('parse-btn').addEventListener('click', async () => {
+  if (!selectedFiles.length) return;
+  setStatus('loading', `<span class="spinner spinner-blue"></span>正在识别 ${selectedFiles.length} 张截图（Qwen-VL）...`);
+  document.getElementById('parse-btn').disabled = true;
+  setStep(2);
+
+  const fd = new FormData();
+  selectedFiles.forEach(f => fd.append('files', f));
+
+  try {
+    const res  = await fetch('/api/advisor/parse-screenshot', { method:'POST', body:fd });
+    const data = await res.json();
+
+    if (!data.success || !data.positions.length) {
+      setStatus('error', '未识别到持仓数据，请确认截图清晰可见持仓表格');
+      document.getElementById('parse-btn').disabled = false;
+      setStep(1);
+      return;
+    }
+
+    parsedPositions = data.positions;
+    renderPositions(parsedPositions);
+    setStatus('success', `识别完成，共 ${parsedPositions.length} 条持仓（已自动去重）`);
+    document.getElementById('results').style.display = 'block';
+    setStep(3);
+  } catch(e) {
+    setStatus('error', '网络错误：' + e.message);
+    setStep(1);
+  }
+  document.getElementById('parse-btn').disabled = false;
+});
+
+// ── Advice ─────────────────────────────────────────────────────────────────────
+document.getElementById('advice-btn').addEventListener('click', async () => {
+  if (!parsedPositions.length) return;
+  setStatus('loading', '<span class="spinner spinner-blue"></span>DeepSeek R1 分析中（约 15-30 秒）...');
+  document.getElementById('advice-btn').disabled = true;
+
+  try {
+    const res  = await fetch('/api/advisor/advice', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ positions:parsedPositions, include_signals:true }),
+    });
+    const data = await res.json();
+    renderAdvice(data);
+    setStatus('success', '调仓建议已生成');
+    document.getElementById('advice-section').style.display = 'block';
+    document.getElementById('advice-section').scrollIntoView({ behavior:'smooth', block:'start' });
+  } catch(e) {
+    setStatus('error', '建议生成失败：' + e.message);
+  }
+  document.getElementById('advice-btn').disabled = false;
+});
+
+// ── Save ───────────────────────────────────────────────────────────────────────
+document.getElementById('save-btn').addEventListener('click', async () => {
+  if (!parsedPositions.length) return;
+  document.getElementById('save-btn').disabled = true;
+  setStatus('loading', '<span class="spinner spinner-blue"></span>正在保存持仓...');
+
+  const today = new Date().toISOString().slice(0,10);
+  const payload = parsedPositions
+    .filter(p => p.ticker && p.entry_price)
+    .map(p => ({
+      asset: p.asset || p.ticker,
+      ticker: p.ticker,
+      direction: p.direction || 'long',
+      entry_price: p.entry_price,
+      entry_date: today,
+      quantity: p.quantity || 0,
+      cost_basis_usd: p.cost_basis || (p.entry_price * (p.quantity || 0)),
+      notes: '截图导入',
+    }));
+
+  if (!payload.length) {
+    setStatus('error', '没有可保存的持仓（缺少 ticker 或成本价）');
+    document.getElementById('save-btn').disabled = false;
+    return;
+  }
+
+  try {
+    const res  = await fetch('/api/portfolio/positions/bulk-import', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    const detailHtml = data.details.map(d => {
+      if (d.action === 'created') {
+        return `<span style="color:var(--green)">✓ ${d.asset||d.ticker}</span>`;
+      } else {
+        return `<span style="color:var(--text-3)">⊘ ${d.asset||d.ticker}（已存在）</span>`;
+      }
+    }).join('');
+
+    const confirmEl = document.getElementById('save-confirm');
+    confirmEl.style.display = 'block';
+    confirmEl.querySelector('strong').textContent = `新建 ${data.created} 条，跳过 ${data.skipped} 条`;
+    document.getElementById('save-confirm-detail').innerHTML = detailHtml;
+
+    setStatus('success', `批量导入完成：新建 ${data.created} 条，跳过 ${data.skipped} 条`);
+    setStep(4);
+  } catch(e) {
+    setStatus('error', '保存失败：' + e.message);
+  }
+  document.getElementById('save-btn').disabled = false;
+});
+
+// ── Render positions ──────────────────────────────────────────────────────────
+function renderPositions(positions) {
+  document.getElementById('positions-list').innerHTML = positions.map(p => {
+    const pnlCls  = (p.unrealized_pnl_pct || 0) >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const pnlSign = (p.unrealized_pnl_pct || 0) >= 0 ? '+' : '';
+    const dirCls  = p.direction === 'short' ? 'dir-short' : 'dir-long';
+    const dirText = p.direction === 'short' ? '做空' : '做多';
+    return `
+    <div class="pos-card">
+      <div class="pos-card-top">
+        <div>
+          <div class="pos-name">${p.asset || '未知资产'}</div>
+          <div class="pos-meta">${p.ticker || ''}</div>
+        </div>
+        <span class="dir-badge ${dirCls}">${dirText}</span>
+      </div>
+      <div class="pos-grid">
+        <div class="pos-field">
+          <div class="field-label">数量</div>
+          <div class="field-value">${p.quantity ?? '—'}</div>
+        </div>
+        <div class="pos-field">
+          <div class="field-label">成本价</div>
+          <div class="field-value">${p.entry_price ?? '—'}</div>
+        </div>
+        <div class="pos-field">
+          <div class="field-label">现价</div>
+          <div class="field-value">${p.current_price ?? '—'}</div>
+        </div>
+        <div class="pos-field">
+          <div class="field-label">浮动盈亏</div>
+          <div class="field-value ${pnlCls}">${p.unrealized_pnl_pct != null ? pnlSign + p.unrealized_pnl_pct.toFixed(2) + '%' : '—'}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Render advice ──────────────────────────────────────────────────────────────
+function renderAdvice(data) {
+  const sumBox = document.getElementById('summary-box');
+  if (data.summary) {
+    sumBox.textContent = data.summary;
+    sumBox.style.display = 'block';
+  }
+
+  const actionMap = {
+    '持有': ['act-hold','持有'],
+    '加仓': ['act-buy','加仓'],
+    '建仓': ['act-buy','建仓'],
+    '减仓': ['act-sell','减仓'],
+    '平仓': ['act-sell','平仓'],
+    '观察': ['act-watch','观察'],
+  };
+
+  document.getElementById('advice-list').innerHTML = (data.recommendations || []).map(r => {
+    const [actCls, actText] = actionMap[r.current_action] || ['act-watch', r.current_action || '观察'];
+    const urgCls = `urgency-${r.urgency || 'low'}`;
+    return `
+    <div class="advice-card ${urgCls}">
+      <div class="advice-hd">
+        <div>
+          <span class="advice-asset">${r.asset || ''}</span>
+          <span class="advice-ticker">${r.ticker || ''}</span>
+        </div>
+        <span class="advice-action-badge ${actCls}">${actText}</span>
+      </div>
+      <div class="advice-reason">${r.reason || ''}</div>
+    </div>`;
+  }).join('');
+
+  const risks = data.risk_notes || [];
+  if (risks.length) {
+    document.getElementById('risk-section').style.display = 'block';
+    document.getElementById('risk-list').innerHTML = risks.map(r =>
+      `<div class="risk-item">⚠ ${r}</div>`
+    ).join('');
+  }
+}
+
+// ── Status helpers ─────────────────────────────────────────────────────────────
+function setStatus(type, html) {
+  const el = document.getElementById('status');
+  el.className = `status-${type}`;
+  el.innerHTML = `<div class="status-dot"></div><span>${html}</span>`;
+  el.style.display = '';
+}
+function hideStatus() {
+  document.getElementById('status').style.display = 'none';
+}
+</script>
+</body>
+</html>
