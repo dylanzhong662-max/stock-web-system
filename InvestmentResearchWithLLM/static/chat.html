@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>行业投研助手</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  :root {
+    --blue-brand: #1456F0;
+    --blue-act:   #3370FF;
+    --blue-light: #EEF3FF;
+    --bg:         #F5F6F8;
+    --card:       #FFFFFF;
+    --border:     #E0E3EA;
+    --text:       #1D2129;
+    --text-2:     #4E5969;
+    --text-3:     #8D93A5;
+    --success:    #00B42A;
+    --sidebar-w:  220px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── 顶栏 ── */
+  .topbar {
+    height: 52px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 10px;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  .topbar-logo {
+    width: 28px; height: 28px;
+    background: var(--blue-brand);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 14px;
+  }
+  .topbar-title { font-size: 15px; font-weight: 600; color: var(--text); }
+  .topbar-status {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-3);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .status-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--success);
+  }
+
+  /* ── 主体 ── */
+  .main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── 侧栏 ── */
+  .sidebar {
+    width: var(--sidebar-w);
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    padding: 16px 12px;
+    gap: 6px;
+    overflow-y: auto;
+  }
+  .sidebar-section {
+    font-size: 11px;
+    color: var(--text-3);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 8px 8px 4px;
+    text-transform: uppercase;
+  }
+  .sidebar-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-2);
+    text-align: left;
+    width: 100%;
+    transition: background 0.15s;
+  }
+  .sidebar-btn:hover { background: var(--blue-light); color: var(--blue-brand); }
+  .sidebar-btn.active { background: var(--blue-light); color: var(--blue-brand); font-weight: 500; }
+  .sidebar-btn .icon { font-size: 15px; width: 20px; text-align: center; }
+  .sidebar-divider {
+    height: 1px; background: var(--border); margin: 6px 0;
+  }
+
+  /* ── 对话区 ── */
+  .chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .message {
+    max-width: 820px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    gap: 12px;
+  }
+  .message.user { flex-direction: row-reverse; }
+
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+  }
+  .avatar.ai { background: var(--blue-brand); color: #fff; }
+  .avatar.user { background: var(--blue-light); color: var(--blue-brand); }
+
+  .bubble {
+    max-width: calc(100% - 44px);
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.7;
+    word-break: break-word;
+  }
+  .message.ai .bubble {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-top-left-radius: 4px;
+  }
+  .message.user .bubble {
+    background: var(--blue-act);
+    color: #fff;
+    border-top-right-radius: 4px;
+  }
+
+  /* Markdown 内容样式 */
+  .bubble h1, .bubble h2 { font-size: 16px; font-weight: 600; margin: 14px 0 6px; color: var(--text); }
+  .bubble h3 { font-size: 14px; font-weight: 600; margin: 12px 0 4px; color: var(--text); }
+  .bubble h2:first-child, .bubble h1:first-child { margin-top: 0; }
+  .bubble p { margin: 6px 0; }
+  .bubble ul, .bubble ol { padding-left: 20px; margin: 6px 0; }
+  .bubble li { margin: 3px 0; }
+  .bubble strong { font-weight: 600; color: var(--text); }
+  .bubble code {
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: "SF Mono", Consolas, monospace;
+    color: var(--blue-brand);
+  }
+  .bubble pre {
+    background: #1e2433;
+    color: #e8eaf0;
+    padding: 12px 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 8px 0;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .bubble pre code { background: none; color: inherit; padding: 0; }
+  .bubble blockquote {
+    border-left: 3px solid var(--blue-act);
+    padding-left: 12px;
+    margin: 8px 0;
+    color: var(--text-2);
+    font-size: 13px;
+  }
+  .bubble hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+
+  /* 表格 */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 10px 0;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .bubble table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .bubble th {
+    background: var(--blue-light);
+    color: var(--blue-brand);
+    font-weight: 600;
+    padding: 8px 12px;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .bubble td {
+    padding: 7px 12px;
+    border-top: 1px solid var(--border);
+    color: var(--text-2);
+    vertical-align: top;
+  }
+  .bubble tr:hover td { background: #fafbfc; }
+
+  /* 加载动画 */
+  .typing { display: flex; align-items: center; gap: 4px; padding: 4px 0; }
+  .typing span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-3);
+    animation: blink 1.2s infinite;
+  }
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink {
+    0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1); }
+  }
+
+  /* ── 输入区 ── */
+  .input-area {
+    padding: 16px 24px 20px;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .input-box {
+    max-width: 820px;
+    margin: 0 auto;
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    background: var(--bg);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    transition: border-color 0.2s;
+  }
+  .input-box:focus-within { border-color: var(--blue-act); }
+  .input-box textarea {
+    flex: 1;
+    border: none;
+    background: none;
+    resize: none;
+    outline: none;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+    font-family: inherit;
+    max-height: 140px;
+    min-height: 24px;
+  }
+  .input-box textarea::placeholder { color: var(--text-3); }
+  .send-btn {
+    width: 34px; height: 34px;
+    background: var(--blue-act);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+    flex-shrink: 0;
+    transition: background 0.15s, opacity 0.15s;
+  }
+  .send-btn:hover { background: var(--blue-brand); }
+  .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .send-btn svg { width: 16px; height: 16px; }
+
+  /* 欢迎页 */
+  .welcome {
+    max-width: 600px;
+    margin: 40px auto;
+    padding: 0 24px;
+    text-align: center;
+  }
+  .welcome-logo {
+    width: 56px; height: 56px;
+    background: var(--blue-brand);
+    border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 26px;
+    margin: 0 auto 16px;
+  }
+  .welcome h2 { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+  .welcome p { font-size: 14px; color: var(--text-2); line-height: 1.6; margin-bottom: 28px; }
+  .welcome-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    text-align: left;
+  }
+  .welcome-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .welcome-card:hover {
+    border-color: var(--blue-act);
+    box-shadow: 0 2px 8px rgba(51,112,255,0.1);
+  }
+  .welcome-card .card-icon { font-size: 20px; margin-bottom: 6px; }
+  .welcome-card .card-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+  .welcome-card .card-desc { font-size: 12px; color: var(--text-3); line-height: 1.5; }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+
+  @media (max-width: 640px) {
+    .sidebar { display: none; }
+    .welcome-cards { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<div class="topbar">
+  <div class="topbar-logo">研</div>
+  <span class="topbar-title">行业投研助手</span>
+  <div class="topbar-status">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">就绪</span>
+  </div>
+</div>
+
+<!-- 主体 -->
+<div class="main">
+
+  <!-- 侧栏 -->
+  <div class="sidebar">
+    <div class="sidebar-section">产业链分析</div>
+    <button class="sidebar-btn" onclick="quickSend('分析AI算力产业链')">
+      <span class="icon">⚡</span>AI 算力
+    </button>
+    <button class="sidebar-btn" onclick="quickSend('分析半导体产业链')">
+      <span class="icon">💎</span>半导体
+    </button>
+    <button class="sidebar-btn" onclick="quickSend('分析云计算产业链')">
+      <span class="icon">☁️</span>云计算
+    </button>
+    <button class="sidebar-btn" onclick="quickSend('分析新能源汽车产业链')">
+      <span class="icon">🚗</span>新能源汽车
+    </button>
+    <button class="sidebar-btn" onclick="quickSend('分析AI应用SaaS产业链')">
+      <span class="icon">🤖</span>AI 应用
+    </button>
+
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section">公司分析</div>
+    <button class="sidebar-btn" onclick="quickSend('分析英伟达 NVDA')">
+      <span class="icon">📊</span>英伟达 NVDA
+    </button>
+    <button class="sidebar-btn" onclick="quickSend('分析台积电 TSM')">
+      <span class="icon">📊</span>台积电 TSM
+    </button>
+    <button class="sidebar-btn" onclick="quickSend('比较NVDA和AMD')">
+      <span class="icon">⚖️</span>NVDA vs AMD
+    </button>
+
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section">我的组合</div>
+    <button class="sidebar-btn" onclick="quickSend('分析我的持仓')">
+      <span class="icon">💼</span>持仓研究报告
+    </button>
+  </div>
+
+  <!-- 对话区 -->
+  <div class="chat-area">
+    <div class="messages" id="messages">
+      <!-- 欢迎页 -->
+      <div class="welcome" id="welcome">
+        <div class="welcome-logo">📈</div>
+        <h2>行业投研助手</h2>
+        <p>基于 DeepSeek R1 的产业链分析工具，帮你快速拆解行业利润池、定位核心标的</p>
+        <div class="welcome-cards">
+          <div class="welcome-card" onclick="quickSend('分析AI算力产业链')">
+            <div class="card-icon">⚡</div>
+            <div class="card-title">AI 算力产业链</div>
+            <div class="card-desc">8层拆解：芯片设计→算力基础设施，利润池排名</div>
+          </div>
+          <div class="welcome-card" onclick="quickSend('分析英伟达 NVDA')">
+            <div class="card-icon">📊</div>
+            <div class="card-title">分析单只股票</div>
+            <div class="card-desc">产业链定位 + 财务快照 + 投研结论</div>
+          </div>
+          <div class="welcome-card" onclick="quickSend('比较NVDA和AMD')">
+            <div class="card-icon">⚖️</div>
+            <div class="card-title">对比两家公司</div>
+            <div class="card-desc">从产业链竞争地位到估值的横向比较</div>
+          </div>
+          <div class="welcome-card" onclick="quickSend('分析我的持仓')">
+            <div class="card-icon">💼</div>
+            <div class="card-title">持仓研究报告</div>
+            <div class="card-desc">读取持仓数据库，生成组合产业链分析</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 输入区 -->
+    <div class="input-area">
+      <div class="input-box">
+        <textarea
+          id="inputText"
+          placeholder="输入行业、公司名称或股票代码…（Enter 发送，Shift+Enter 换行）"
+          rows="1"
+          onkeydown="handleKey(event)"
+          oninput="autoResize(this)"
+        ></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ── 配置 ──────────────────────────────────────
+  const API_BASE = window.location.origin;
+
+  // marked 配置：表格包裹 div
+  const renderer = new marked.Renderer();
+  const origTable = renderer.table.bind(renderer);
+  renderer.table = (header, body) => `<div class="table-wrap">${origTable(header, body)}</div>`;
+  marked.setOptions({ renderer, breaks: true, gfm: true });
+
+  // ── 状态 ──────────────────────────────────────
+  let isStreaming = false;
+
+  // ── 输入框自适应高度 ──────────────────────────
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+    document.getElementById('sendBtn').disabled = el.value.trim() === '';
+  }
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!isStreaming && document.getElementById('inputText').value.trim()) {
+        sendMessage();
+      }
+    }
+  }
+
+  // ── 快捷按钮 ──────────────────────────────────
+  function quickSend(text) {
+    if (isStreaming) return;
+    document.getElementById('inputText').value = text;
+    autoResize(document.getElementById('inputText'));
+    sendMessage();
+  }
+
+  // ── 发送消息 ──────────────────────────────────
+  async function sendMessage() {
+    const input = document.getElementById('inputText');
+    const text = input.value.trim();
+    if (!text || isStreaming) return;
+
+    // 隐藏欢迎页
+    const welcome = document.getElementById('welcome');
+    if (welcome) welcome.remove();
+
+    // 显示用户消息
+    appendMessage('user', text);
+    input.value = '';
+    input.style.height = 'auto';
+    document.getElementById('sendBtn').disabled = true;
+
+    // 显示 AI 加载状态
+    const aiId = appendMessage('ai', null); // typing
+    setStatus('thinking', '思考中…');
+    isStreaming = true;
+
+    try {
+      const resp = await fetch(`${API_BASE}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, session_id: 'default' }),
+      });
+
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullText = '';
+
+      setStatus('streaming', '生成中…');
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.text) {
+              fullText += parsed.text;
+              updateMessage(aiId, fullText);
+            }
+          } catch {}
+        }
+      }
+
+    } catch (err) {
+      updateMessage(aiId, `⚠️ 请求失败：${err.message}`);
+    } finally {
+      isStreaming = false;
+      setStatus('ready', '就绪');
+    }
+  }
+
+  // ── DOM 操作 ──────────────────────────────────
+  let msgCounter = 0;
+
+  function appendMessage(role, text) {
+    const id = 'msg-' + (++msgCounter);
+    const messages = document.getElementById('messages');
+
+    const wrap = document.createElement('div');
+    wrap.className = `message ${role}`;
+    wrap.id = id;
+
+    const avatar = document.createElement('div');
+    avatar.className = `avatar ${role}`;
+    avatar.textContent = role === 'ai' ? '研' : '我';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+
+    if (text === null) {
+      bubble.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+    } else {
+      bubble.innerHTML = role === 'ai' ? marked.parse(text) : escapeHtml(text);
+    }
+
+    wrap.appendChild(avatar);
+    wrap.appendChild(bubble);
+    messages.appendChild(wrap);
+    messages.scrollTop = messages.scrollHeight;
+    return id;
+  }
+
+  function updateMessage(id, text) {
+    const wrap = document.getElementById(id);
+    if (!wrap) return;
+    const bubble = wrap.querySelector('.bubble');
+    bubble.innerHTML = marked.parse(text);
+    const messages = document.getElementById('messages');
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function setStatus(state, text) {
+    document.getElementById('statusText').textContent = text;
+    const dot = document.getElementById('statusDot');
+    dot.style.background = state === 'ready' ? 'var(--success)'
+                         : state === 'thinking' ? '#FF7D00'
+                         : 'var(--blue-act)';
+  }
+
+  // 初始化：输入框监听
+  document.getElementById('inputText').addEventListener('input', function() {
+    document.getElementById('sendBtn').disabled = this.value.trim() === '';
+  });
+</script>
+</body>
+</html>
