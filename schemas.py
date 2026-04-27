@@ -197,6 +197,7 @@ class ScreenshotParseResponse(BaseModel):
 class AdviceRequest(BaseModel):
     positions: List[ParsedPosition]
     include_signals: bool = True
+    model: Optional[str] = None  # None = 使用默认 deepseek-reasoner
 
 
 class AdviceResponse(BaseModel):

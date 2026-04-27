@@ -92,7 +92,7 @@ def get_advice(body: AdviceRequest):
     if body.include_signals:
         signals = signal_reader.read_all_signals()
 
-    result = advisor_module.generate_advice(positions_data, signals)
+    result = advisor_module.generate_advice(positions_data, signals, model_override=body.model)
     return AdviceResponse(
         summary=result.get("summary", ""),
         recommendations=result.get("recommendations", []),

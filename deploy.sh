@@ -56,6 +56,12 @@ if [ ! -f ".env" ]; then
 fi
 
 # 写入 API Keys 和 Webhook（确保 key 正确）
+# LLM_API_KEY 优先；DEEPSEEK_API_KEY 作为兼容回退
+if grep -q "LLM_API_KEY" .env; then
+  sed -i 's|export LLM_API_KEY=.*|export LLM_API_KEY=sk-6BV9Xfa9AJ09pkt0AHFPQtZUtlM28pCOnon6ArdIJW1fVyDP|' .env
+else
+  echo 'export LLM_API_KEY=sk-6BV9Xfa9AJ09pkt0AHFPQtZUtlM28pCOnon6ArdIJW1fVyDP' >> .env
+fi
 sed -i 's|export DEEPSEEK_API_KEY=.*|export DEEPSEEK_API_KEY=sk-c75ee0f98c8c410ea0e5005f3b3bc5fa|' .env
 sed -i 's|export FEISHU_WEBHOOK_URL=.*|export FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/1b0f0064-48cb-43b5-9bb1-8b30188a3e8c|' .env
 

@@ -417,6 +417,25 @@ body {
     <div class="section-label">识别到的持仓</div>
     <div id="positions-list"></div>
 
+    <!-- Model selector -->
+    <div style="margin-bottom:10px">
+      <div class="section-label" style="margin-bottom:6px">分析模型</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;color:var(--text-2)">
+          <input type="radio" name="model-select" value="deepseek-reasoner" checked style="accent-color:var(--blue-mid)"> DeepSeek R1
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;color:var(--text-2)">
+          <input type="radio" name="model-select" value="deepseek-chat" style="accent-color:var(--blue-mid)"> DeepSeek V3
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;color:var(--text-2)">
+          <input type="radio" name="model-select" value="gpt-4o" style="accent-color:var(--blue-mid)"> GPT-4o
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;color:var(--text-2)">
+          <input type="radio" name="model-select" value="gemini-2.5-pro-preview" style="accent-color:var(--blue-mid)"> Gemini 2.5 Pro
+        </label>
+      </div>
+    </div>
+
     <!-- Action row -->
     <div class="action-row">
       <button class="btn-full btn-primary" id="advice-btn" style="margin-bottom:0">
@@ -569,14 +588,17 @@ document.getElementById('parse-btn').addEventListener('click', async () => {
 // ── Advice ─────────────────────────────────────────────────────────────────────
 document.getElementById('advice-btn').addEventListener('click', async () => {
   if (!parsedPositions.length) return;
-  setStatus('loading', '<span class="spinner spinner-blue"></span>DeepSeek R1 分析中（约 15-30 秒）...');
+  const selectedModel = document.querySelector('input[name="model-select"]:checked')?.value || 'deepseek-reasoner';
+  const modelLabel = document.querySelector(`input[name="model-select"][value="${selectedModel}"]`)?.closest('label')?.textContent?.trim() || selectedModel;
+  const isDeepSeek = selectedModel.startsWith('deepseek-');
+  setStatus('loading', `<span class="spinner spinner-blue"></span>${modelLabel} 分析中${isDeepSeek ? '（约 15-30 秒）' : ''}...`);
   document.getElementById('advice-btn').disabled = true;
 
   try {
     const res  = await fetch('/api/advisor/advice', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ positions:parsedPositions, include_signals:true }),
+      body: JSON.stringify({ positions:parsedPositions, include_signals:true, model:selectedModel }),
     });
     const data = await res.json();
     renderAdvice(data);

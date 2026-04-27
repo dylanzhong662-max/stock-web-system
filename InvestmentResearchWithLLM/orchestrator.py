@@ -1,8 +1,7 @@
-import os
 import json
 from typing import AsyncGenerator
-from openai import AsyncOpenAI
 
+from llm_client import get_client, resolve_model, is_deepseek
 from chain_analyzer import ChainAnalyzer
 from company_analyzer import CompanyAnalyzer
 from portfolio_research import PortfolioResearch
@@ -22,17 +21,15 @@ _INTENT_PROMPT = """你是一个投研意图识别器。根据用户输入，返
 
 class Orchestrator:
     def __init__(self):
-        self._client = AsyncOpenAI(
-            api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-            base_url="https://api.deepseek.com",
-        )
         self._chain = ChainAnalyzer()
         self._company = CompanyAnalyzer()
         self._portfolio = PortfolioResearch()
 
-    async def _detect_intent(self, message: str) -> dict:
-        resp = await self._client.chat.completions.create(
-            model="deepseek-v4-pro",
+    async def _detect_intent(self, message: str, model: str) -> dict:
+        # 意图识别用轻量模型：deepseek 系列用 v4-pro，其余用传入模型
+        intent_model = "deepseek-v4-pro" if is_deepseek(model) else model
+        resp = await get_client(intent_model).chat.completions.create(
+            model=intent_model,
             messages=[
                 {"role": "system", "content": _INTENT_PROMPT},
                 {"role": "user", "content": message},
@@ -40,43 +37,44 @@ class Orchestrator:
             temperature=0,
             max_tokens=100,
         )
-        raw = resp.choices[0].message.content.strip()
+        raw = (resp.choices[0].message.content or "").strip()
         try:
             return json.loads(raw)
         except Exception:
             return {"intent": "qa", "entities": []}
 
-    async def stream(self, message: str, session_id: str) -> AsyncGenerator[str, None]:
-        intent_data = await self._detect_intent(message)
+    async def stream(self, message: str, session_id: str, model: str | None = None) -> AsyncGenerator[str, None]:
+        model = resolve_model(model)
+        intent_data = await self._detect_intent(message, model)
         intent = intent_data.get("intent", "qa")
         entities = intent_data.get("entities", [])
 
         if intent == "chain" and entities:
-            async for chunk in self._chain.stream(entities[0]):
+            async for chunk in self._chain.stream(entities[0], model):
                 yield chunk
 
         elif intent == "company" and entities:
-            async for chunk in self._company.stream(entities[0]):
+            async for chunk in self._company.stream(entities[0], model):
                 yield chunk
 
         elif intent == "compare" and len(entities) >= 2:
             yield f"## 对比分析：{entities[0]} vs {entities[1]}\n\n"
             for ticker in entities[:2]:
-                yield f"---\n\n"
-                async for chunk in self._company.stream(ticker):
+                yield "---\n\n"
+                async for chunk in self._company.stream(ticker, model):
                     yield chunk
 
         elif intent == "portfolio":
-            async for chunk in self._portfolio.stream():
+            async for chunk in self._portfolio.stream(model):
                 yield chunk
 
         else:
-            async for chunk in self._qa_stream(message):
+            async for chunk in self._qa_stream(message, model):
                 yield chunk
 
-    async def _qa_stream(self, message: str) -> AsyncGenerator[str, None]:
-        stream = await self._client.chat.completions.create(
-            model="deepseek-v4-pro",
+    async def _qa_stream(self, message: str, model: str) -> AsyncGenerator[str, None]:
+        stream = await get_client(model).chat.completions.create(
+            model=model,
             messages=[
                 {"role": "system", "content": "你是一个专业的投资研究助手，擅长行业分析和股票研究。"},
                 {"role": "user", "content": message},

@@ -1,11 +1,10 @@
 import os
-import json
 import sqlite3
 from typing import AsyncGenerator
-from openai import AsyncOpenAI
 
 import data_fetcher
 import report_generator
+from llm_client import get_client, resolve_model, is_deepseek
 from company_analyzer import CompanyAnalyzer
 
 _PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "portfolio_research.md")
@@ -35,13 +34,10 @@ def _read_positions() -> list[dict]:
 
 class PortfolioResearch:
     def __init__(self):
-        self._client = AsyncOpenAI(
-            api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-            base_url="https://api.deepseek.com",
-        )
         self._company = CompanyAnalyzer()
 
-    async def analyze(self) -> tuple[str, list[dict]]:
+    async def analyze(self, model: str | None = None) -> tuple[str, list[dict]]:
+        model = resolve_model(model)
         positions = _read_positions()
         if not positions:
             return "暂无开仓持仓，无法生成报告。", []
@@ -50,17 +46,18 @@ class PortfolioResearch:
         prompt = self._build_prompt(enriched)
 
         chunks = []
-        async for chunk in self._stream_r1(prompt):
+        async for chunk in self._stream(prompt, model):
             chunks.append(chunk)
         content = "".join(chunks)
 
         report = report_generator.format_report(
-            content, "holderAndAction trading.db + FMP + Tavily + DeepSeek V4 Pro"
+            content, f"holderAndAction trading.db + FMP + Tavily + {model}"
         )
         report_generator.save_cache("portfolio", "latest", report)
         return report, enriched
 
-    async def stream(self) -> AsyncGenerator[str, None]:
+    async def stream(self, model: str | None = None) -> AsyncGenerator[str, None]:
+        model = resolve_model(model)
         positions = _read_positions()
         if not positions:
             yield "暂无开仓持仓，无法生成报告。"
@@ -70,13 +67,13 @@ class PortfolioResearch:
         prompt = self._build_prompt(enriched)
 
         chunks = []
-        async for chunk in self._stream_r1(prompt):
+        async for chunk in self._stream(prompt, model):
             chunks.append(chunk)
             yield chunk
 
         content = "".join(chunks)
         report = report_generator.format_report(
-            content, "holderAndAction trading.db + FMP + Tavily + DeepSeek V4 Pro"
+            content, f"holderAndAction trading.db + FMP + Tavily + {model}"
         )
         report_generator.save_cache("portfolio", "latest", report)
 
@@ -125,11 +122,7 @@ class PortfolioResearch:
             )
 
         positions_text = "\n".join(lines)
-
-        # 加权平均 Beta
         weighted_beta_str = self._calc_weighted_beta(positions)
-
-        # 相关性矩阵文本
         corr_data = positions[0].get("_corr_data", {}) if positions else {}
         corr_text = self._fmt_corr(corr_data)
 
@@ -142,7 +135,6 @@ class PortfolioResearch:
         )
 
     def _calc_weighted_beta(self, positions: list[dict]) -> str:
-        """等权加权平均 Beta（无仓位金额时用等权）"""
         betas = [p.get("beta") for p in positions if p.get("beta") is not None]
         if not betas:
             return "N/A"
@@ -153,24 +145,24 @@ class PortfolioResearch:
         pairs = corr_data.get("pairs", {})
         if not pairs:
             return "数据不足，无法计算"
-        high_corr = {k: v for k, v in pairs.items() if abs(v) >= 0.7}
         lines = []
         for k, v in sorted(pairs.items()):
             flag = " ⚠️ 高度相关" if abs(v) >= 0.7 else ""
             lines.append(f"  - {k}: {v:.2f}{flag}")
         return "\n".join(lines) if lines else "暂无数据"
 
-    async def _stream_r1(self, prompt: str) -> AsyncGenerator[str, None]:
-        stream = await self._client.chat.completions.create(
-            model="deepseek-v4-pro",
+    async def _stream(self, prompt: str, model: str) -> AsyncGenerator[str, None]:
+        kwargs: dict = dict(
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=6000,
             stream=True,
-            extra_body={"thinking": {"type": "enabled", "budget_tokens": 3000}},
         )
+
+        stream = await get_client(model).chat.completions.create(**kwargs)
         async for chunk in stream:
             delta = chunk.choices[0].delta
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            if is_deepseek(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
                 continue
             if delta.content:
                 yield delta.content

@@ -1,9 +1,9 @@
 import os
 from typing import AsyncGenerator
-from openai import AsyncOpenAI
 
 import data_fetcher
 import report_generator
+from llm_client import get_client, resolve_model, is_deepseek
 
 _PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "company_analysis.md")
 
@@ -23,19 +23,14 @@ def _fmt(val, pct=False, suffix="") -> str:
 
 
 class CompanyAnalyzer:
-    def __init__(self):
-        self._client = AsyncOpenAI(
-            api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-            base_url="https://api.deepseek.com",
-        )
-
     def _load_prompt(self, ticker: str, financial: dict, news: list[dict]) -> str:
         with open(_PROMPT_FILE, encoding="utf-8") as f:
             template = f.read()
         news_text = "\n\n".join(
             f"**{r['title']}**"
             + (f"（{r['published_date']}）" if r.get("published_date") else "")
-            + f"\n{r['content'][:300]}"
+            + (f" — [原文]({r['url']})" if r.get("url") else "")
+            + f"\n{r['content'][:800]}"
             for r in news
         )
         return (
@@ -51,8 +46,8 @@ class CompanyAnalyzer:
             .replace("{news_results}", news_text)
         )
 
-    async def analyze(self, ticker: str) -> tuple[str, dict]:
-        """返回 (report_markdown, financial_dict)"""
+    async def analyze(self, ticker: str, model: str | None = None) -> tuple[str, dict]:
+        model = resolve_model(model)
         cached = report_generator.get_cached("company", ticker.upper())
         if cached:
             return cached, {}
@@ -61,15 +56,16 @@ class CompanyAnalyzer:
         prompt = self._load_prompt(ticker, financial, news)
 
         chunks = []
-        async for chunk in self._stream_r1(prompt):
+        async for chunk in self._stream(prompt, model):
             chunks.append(chunk)
         content = "".join(chunks)
 
-        report = report_generator.format_report(content, "FMP + yfinance + Tavily + DeepSeek V4 Pro")
+        report = report_generator.format_report(content, f"FMP + yfinance + Tavily + {model}")
         report_generator.save_cache("company", ticker.upper(), report)
         return report, financial
 
-    async def stream(self, ticker: str) -> AsyncGenerator[str, None]:
+    async def stream(self, ticker: str, model: str | None = None) -> AsyncGenerator[str, None]:
+        model = resolve_model(model)
         cached = report_generator.get_cached("company", ticker.upper())
         if cached:
             yield cached
@@ -79,33 +75,34 @@ class CompanyAnalyzer:
         prompt = self._load_prompt(ticker, financial, news)
 
         chunks = []
-        async for chunk in self._stream_r1(prompt):
+        async for chunk in self._stream(prompt, model):
             chunks.append(chunk)
             yield chunk
 
         content = "".join(chunks)
-        report = report_generator.format_report(content, "FMP + yfinance + Tavily + DeepSeek V4 Pro")
+        report = report_generator.format_report(content, f"FMP + yfinance + Tavily + {model}")
         report_generator.save_cache("company", ticker.upper(), report)
 
     async def _fetch_data(self, ticker: str) -> tuple[dict, list[dict]]:
         import asyncio
         financial, news = await asyncio.gather(
             data_fetcher.get_stock_data(ticker),
-            data_fetcher.search(f"{ticker} 公司分析 最新动态 2025", max_results=3),
+            data_fetcher.search(f"{ticker} 公司分析 最新动态 财报 2025", max_results=8),
         )
         return financial, news
 
-    async def _stream_r1(self, prompt: str) -> AsyncGenerator[str, None]:
-        stream = await self._client.chat.completions.create(
-            model="deepseek-v4-pro",
+    async def _stream(self, prompt: str, model: str) -> AsyncGenerator[str, None]:
+        kwargs: dict = dict(
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=4000,
             stream=True,
-            extra_body={"thinking": {"type": "enabled", "budget_tokens": 2000}},
         )
+
+        stream = await get_client(model).chat.completions.create(**kwargs)
         async for chunk in stream:
             delta = chunk.choices[0].delta
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            if is_deepseek(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
                 continue
             if delta.content:
                 yield delta.content

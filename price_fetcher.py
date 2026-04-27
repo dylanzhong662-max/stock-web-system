@@ -11,6 +11,9 @@ CACHE_TTL = 300
 _PROXY = {"https": "socks5h://127.0.0.1:1080", "http": "socks5h://127.0.0.1:1080"}
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 _FALLBACK_FILE = os.path.join(os.path.dirname(__file__), "data", "price_fallback.json")
 _FALLBACK_PRICES: Dict[str, float] = {}
 
@@ -56,14 +59,22 @@ def _to_yf_ticker(raw_ticker: str) -> str:
 
 def _fetch_single(yf_ticker: str) -> Optional[float]:
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_ticker}?interval=1d&range=2d"
-    try:
-        r = requests.get(url, proxies=_PROXY, headers=_HEADERS, timeout=10)
-        d = r.json()
-        closes = d["chart"]["result"][0]["indicators"]["quote"][0]["close"]
-        closes = [c for c in closes if c is not None]
-        return float(closes[-1]) if closes else None
-    except Exception:
-        return None
+    attempts = [
+        {"proxies": None, "verify": True},
+        {"proxies": None, "verify": False},
+        {"proxies": _PROXY, "verify": True},
+    ]
+    for kwargs in attempts:
+        try:
+            r = requests.get(url, headers=_HEADERS, timeout=10, **kwargs)
+            d = r.json()
+            closes = d["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+            closes = [c for c in closes if c is not None]
+            if closes:
+                return float(closes[-1])
+        except Exception:
+            continue
+    return None
 
 
 def get_prices_batch(positions: List[Tuple[str, str]]) -> Dict[str, Optional[float]]:

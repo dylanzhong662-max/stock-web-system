@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 
 from database import engine, Base
 import models  # noqa: F401
+from llm_client import AVAILABLE_MODELS, resolve_model
 
 Base.metadata.create_all(bind=engine)
 
@@ -40,3 +41,9 @@ def index():
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "0.1.0", "service": "investment-research"}
+
+
+@app.get("/api/models")
+def list_models():
+    current = resolve_model(None)
+    return {"models": AVAILABLE_MODELS, "default": current}

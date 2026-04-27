@@ -1,6 +1,13 @@
 """
-持仓调整建议 — 使用 DeepSeek R1 推理模型
-综合持仓数据 + 大模型金融分析系统的信号输出，给出调仓意见
+持仓调整建议 — 多模型支持
+  - DeepSeek 系列（deepseek-reasoner / deepseek-chat）：直连 https://api.deepseek.com
+  - GPT / Gemini 等：通过 CloseAI 代理 https://api.openai-proxy.org/v1
+
+环境变量：
+  DEEPSEEK_API_KEY  — DeepSeek API Key（直连）
+  CLOSEAI_API_KEY   — CloseAI API Key（GPT/Gemini 代理）
+  DEEPSEEK_BASE_URL — 可选，默认 https://api.deepseek.com
+  CLOSEAI_BASE_URL  — 可选，默认 https://api.openai-proxy.org/v1
 """
 import os
 import json
@@ -8,18 +15,38 @@ import re
 from typing import List, Optional
 from openai import OpenAI
 
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-reasoner"  # R1 推理模型
+_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+_CLOSEAI_BASE_URL = "https://api.openai-proxy.org/v1"
+_DEFAULT_MODEL = "deepseek-reasoner"
 
-_client: Optional[OpenAI] = None
+_DEEPSEEK_PREFIXES = ("deepseek-",)
+
+_clients: dict = {}
 
 
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
-    return _client
+def _is_deepseek(model: str) -> bool:
+    return any(model.startswith(p) for p in _DEEPSEEK_PREFIXES)
+
+
+def _get_client(model: str) -> OpenAI:
+    if _is_deepseek(model):
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        base_url = os.environ.get("DEEPSEEK_BASE_URL", _DEEPSEEK_BASE_URL)
+        cache_key = f"deepseek:{api_key}"
+    else:
+        api_key = os.environ.get("CLOSEAI_API_KEY") or os.environ.get("LLM_API_KEY", "")
+        base_url = os.environ.get("CLOSEAI_BASE_URL", _CLOSEAI_BASE_URL)
+        cache_key = f"closeai:{api_key}"
+
+    if cache_key not in _clients:
+        _clients[cache_key] = OpenAI(api_key=api_key, base_url=base_url)
+    return _clients[cache_key]
+
+
+def _get_model(model_override: Optional[str] = None) -> str:
+    if model_override:
+        return model_override
+    return os.environ.get("DEEPSEEK_MODEL", _DEFAULT_MODEL)
 
 
 SYSTEM_PROMPT = """你是一位对冲基金级别的资产组合管理顾问，专注于量化策略与风险管理。
@@ -120,7 +147,7 @@ SYSTEM_PROMPT = """你是一位对冲基金级别的资产组合管理顾问，�
 - 止损已触及 → 立即平仓，urgency=urgent"""
 
 
-def generate_advice(positions: List[dict], signals: dict) -> dict:
+def generate_advice(positions: List[dict], signals: dict, model_override: Optional[str] = None) -> dict:
     """
     positions: 持仓列表（来自截图解析或数据库）
     signals: 各资产信号摘要 {asset: signal_summary}
@@ -140,10 +167,11 @@ def generate_advice(positions: List[dict], signals: dict) -> dict:
 
 请给出调仓建议。"""
 
-    client = _get_client()
+    model = _get_model(model_override)
+    client = _get_client(model)
     try:
         resp = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
@@ -158,13 +186,14 @@ def generate_advice(positions: List[dict], signals: dict) -> dict:
 
         parsed = _parse_advice(raw_text)
         parsed["raw_thinking"] = thinking
+        parsed["model_used"] = model
         return parsed
 
     except Exception as e:
         return {
             "summary": f"生成建议失败：{e}",
             "recommendations": [],
-            "risk_notes": ["API 调用失败，请检查 DEEPSEEK_API_KEY 配置"],
+            "risk_notes": [f"API 调用失败，请检查 LLM_API_KEY 配置（当前模型：{model}）"],
             "raw_thinking": None,
         }
 
