@@ -8,9 +8,12 @@
 
 **组合风险概览（量化）：**
 - 持仓数量：{count}
-- 组合加权 Beta：{weighted_beta}
+- 组合加权 Beta（市值加权，R²<0.1 降权）：{weighted_beta}
 - 持仓相关性矩阵（1 年日收益率）：
 {correlation_matrix}
+
+**实时新闻与信号（RAG 检索，过去 72 小时，可能为空）：**
+{rag_news_context}
 
 请按以下结构输出，每个章节都必须给出**判断性结论**，不能只描述现象：
 

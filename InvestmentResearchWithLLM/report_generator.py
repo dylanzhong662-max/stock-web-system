@@ -6,9 +6,10 @@ from database import SessionLocal
 from models import ReportCache
 
 TTL = {
-    "chain": 24,
-    "company": 6,
-    "portfolio": 1,
+    "chain": 24,      # 产业链：日级别稳定，每天刷新一次
+    "company": 6,     # 公司分析：半天刷新，覆盖盘中重要新闻
+    "portfolio": 1,   # 持仓研究：持仓可随时变，1h 是合理下限
+    "qa": 4,          # 通用问答：无日内实时性，4h 避免重复打
 }
 
 

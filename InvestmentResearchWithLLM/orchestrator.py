@@ -1,10 +1,13 @@
 import json
+import hashlib
 from typing import AsyncGenerator
 
 from llm_client import get_client, resolve_model, is_deepseek
 from chain_analyzer import ChainAnalyzer
 from company_analyzer import CompanyAnalyzer
 from portfolio_research import PortfolioResearch
+import rag_client
+import report_generator
 
 _INTENT_PROMPT = """你是一个投研意图识别器。根据用户输入，返回 JSON，格式严格如下：
 {"intent": "<chain|company|portfolio|compare|qa>", "entities": ["实体1", "实体2"]}
@@ -73,15 +76,34 @@ class Orchestrator:
                 yield chunk
 
     async def _qa_stream(self, message: str, model: str) -> AsyncGenerator[str, None]:
+        cache_key = hashlib.md5(message.encode()).hexdigest()
+        cached = report_generator.get_cached("qa", cache_key)
+        if cached:
+            yield cached
+            return
+
+        # 尝试从 RAG 获取实时新闻上下文
+        rag_results = await rag_client.search_news(query=message, top_k=4, hours=72)
+        rag_context = rag_client.fmt_news_context(rag_results)
+
+        system_content = "你是一个专业的投资研究助手，擅长行业分析和股票研究。"
+        if rag_context:
+            system_content += f"\n\n【实时新闻参考（RAG 检索）】\n{rag_context}\n\n请在回答中注明引用的新闻来源和时间。"
+
         stream = await get_client(model).chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "你是一个专业的投资研究助手，擅长行业分析和股票研究。"},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": message},
             ],
             stream=True,
         )
+        chunks = []
         async for chunk in stream:
             delta = chunk.choices[0].delta.content
             if delta:
+                chunks.append(delta)
                 yield delta
+
+        if chunks:
+            report_generator.save_cache("qa", cache_key, "".join(chunks))

@@ -4,6 +4,7 @@ import asyncio
 from typing import AsyncGenerator
 
 import data_fetcher
+import rag_client
 import report_generator
 from llm_client import get_client, resolve_model, is_deepseek
 
@@ -101,18 +102,35 @@ class ChainAnalyzer:
         )
 
     async def _fetch_all_data(self, industry: str) -> tuple[list[dict], list[dict]]:
-        """P0: dual Tavily queries; P2: yfinance for extracted tickers."""
-        results_cn, results_en = await asyncio.gather(
+        """P0: dual Tavily + RAG; P2: yfinance for extracted tickers."""
+        results_cn, results_en, rag_results = await asyncio.gather(
             data_fetcher.search(
                 f"{industry} 产业链 行业分析 投资 2025 利润率 关键变量",
-                max_results=12,
+                max_results=10,
             ),
             data_fetcher.search(
                 f"{industry} industry top companies earnings revenue gross margin 2024 2025",
                 max_results=5,
             ),
+            rag_client.search_news(
+                query=f"{industry} industry supply chain earnings revenue outlook",
+                data_types=["news", "earnings", "sec_filing", "regulatory"],
+                top_k=6,
+                hours=168,  # 产业链分析用 7 天窗口
+            ),
         )
-        all_results = results_cn + results_en
+
+        # 把 RAG 结果转为统一格式并前置（时效性更高）
+        rag_converted = [
+            {
+                "title": r.get("chunk_text", "")[:80],
+                "content": r.get("chunk_text", ""),
+                "published_date": (r.get("published_at") or "")[:10],
+                "url": "",
+            }
+            for r in rag_results
+        ]
+        all_results = rag_converted + results_cn + results_en
 
         # P2: detect ticker symbols, validate via yfinance (market_cap presence = real company)
         tickers = _extract_tickers(all_results)

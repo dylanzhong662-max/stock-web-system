@@ -7,21 +7,25 @@
   DEEPSEEK_API_KEY  — DeepSeek 原生 API Key
   LLM_API_KEY       — CloseAI 代理 API Key（非 DeepSeek 模型）
   LLM_BASE_URL      — CloseAI 代理地址，默认 https://api.openai-proxy.org/v1
-  LLM_MODEL         — 默认模型，默认 gemini-2.5-pro-preview
+  LLM_MODEL         — 默认模型，默认 gemini-3.1-pro-preview
 """
 import os
 from openai import AsyncOpenAI
 
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 _CLOSEAI_BASE_URL  = "https://api.openai-proxy.org/v1"
-DEFAULT_MODEL      = "gemini-2.5-pro-preview"
+DEFAULT_MODEL      = "gemini-3.1-pro-preview"
 
 AVAILABLE_MODELS = [
-    {"id": "gemini-2.5-pro-preview",  "name": "Gemini 2.5 Pro",  "tag": "默认"},
-    {"id": "deepseek-v4-pro",         "name": "DeepSeek V4 Pro", "tag": "快速"},
-    {"id": "deepseek-reasoner",       "name": "DeepSeek R1",     "tag": "推理"},
-    {"id": "claude-sonnet-4-20250514","name": "Claude Sonnet 4", "tag": ""},
-    {"id": "gpt-4o",                  "name": "GPT-4o",          "tag": ""},
+    {"id": "gemini-3.1-pro-preview",  "name": "Gemini 3.1 Pro",   "tag": "默认"},
+    {"id": "gemini-3-pro-preview",    "name": "Gemini 3 Pro",     "tag": ""},
+    {"id": "gemini-2.5-pro",          "name": "Gemini 2.5 Pro",   "tag": ""},
+    {"id": "deepseek-v4-pro",         "name": "DeepSeek V4 Pro",  "tag": "快速"},
+    {"id": "deepseek-reasoner",       "name": "DeepSeek R1",      "tag": "推理"},
+    {"id": "claude-sonnet-4-6",       "name": "Claude Sonnet 4.6","tag": ""},
+    {"id": "gpt-4.1",                 "name": "GPT-4.1",          "tag": ""},
+    {"id": "gpt-4o",                  "name": "GPT-4o",           "tag": ""},
+    {"id": "o3",                      "name": "o3",               "tag": ""},
 ]
 
 _deepseek_client: AsyncOpenAI | None = None

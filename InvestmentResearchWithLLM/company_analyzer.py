@@ -1,7 +1,9 @@
+import asyncio
 import os
 from typing import AsyncGenerator
 
 import data_fetcher
+import rag_client
 import report_generator
 from llm_client import get_client, resolve_model, is_deepseek
 
@@ -84,12 +86,35 @@ class CompanyAnalyzer:
         report_generator.save_cache("company", ticker.upper(), report)
 
     async def _fetch_data(self, ticker: str) -> tuple[dict, list[dict]]:
-        import asyncio
-        financial, news = await asyncio.gather(
+        financial, rag_results, tavily_results = await asyncio.gather(
             data_fetcher.get_stock_data(ticker),
-            data_fetcher.search(f"{ticker} 公司分析 最新动态 财报 2025", max_results=8),
+            rag_client.search_news(
+                query=f"{ticker} earnings revenue outlook risk",
+                tickers=[ticker.upper().split(".")[0]],
+                data_types=["news", "earnings", "sec_filing", "insider"],
+                top_k=6,
+            ),
+            data_fetcher.search(f"{ticker} 公司分析 最新动态 财报 2025", max_results=5),
         )
-        return financial, news
+        # RAG 结果优先（带时效标注），不足时用 Tavily 补
+        if rag_results:
+            rag_news = [
+                {
+                    "title": r.get("chunk_text", "")[:80],
+                    "content": r.get("chunk_text", ""),
+                    "published_date": (r.get("published_at") or "")[:10],
+                    "url": "",
+                    "_source": r.get("source_name", ""),
+                    "_sentiment": r.get("sentiment", ""),
+                    "_importance": r.get("importance_score"),
+                }
+                for r in rag_results
+            ]
+            # Tavily 补充至 8 条
+            combined = rag_news + tavily_results[: max(0, 8 - len(rag_news))]
+        else:
+            combined = tavily_results
+        return financial, combined
 
     async def _stream(self, prompt: str, model: str) -> AsyncGenerator[str, None]:
         kwargs: dict = dict(

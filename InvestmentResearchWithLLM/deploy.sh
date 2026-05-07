@@ -55,17 +55,15 @@ if [ ! -f ".env" ]; then
   cp .env.example .env
 fi
 
-# 写入 API Keys
-# LLM_API_KEY (CloseAI) — 优先；DEEPSEEK_API_KEY 作兼容回退
-if grep -q "LLM_API_KEY" .env; then
-  sed -i 's|export LLM_API_KEY=.*|export LLM_API_KEY=sk-6BV9Xfa9AJ09pkt0AHFPQtZUtlM28pCOnon6ArdIJW1fVyDP|' .env
-else
-  echo 'export LLM_API_KEY=sk-6BV9Xfa9AJ09pkt0AHFPQtZUtlM28pCOnon6ArdIJW1fVyDP' >> .env
-fi
-sed -i 's|export DEEPSEEK_API_KEY=.*|export DEEPSEEK_API_KEY=sk-1a9d3723d20446058797e46f3e829d90|' .env
-sed -i 's|export TAVILY_API_KEY=.*|export TAVILY_API_KEY=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|' .env
-sed -i 's|export HOLDER_DB_PATH=.*|export HOLDER_DB_PATH=/opt/holder-action/data/trading.db|' .env
-grep -q 'FMP_API_KEY' .env || echo 'export FMP_API_KEY=3euHIX1gvPaTpAdDPmdxiSBUHkveDAG2' >> .env
+# 写入服务器 .env（无 export 前缀，systemd EnvironmentFile 不支持 export）
+cat > .env <<'ENVEOF'
+DEEPSEEK_API_KEY=sk-1a9d3723d20446058797e46f3e829d90
+TAVILY_API_KEY=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
+FMP_API_KEY=3euHIX1gvPaTpAdDPmdxiSBUHkveDAG2
+LLM_API_KEY=sk-6BV9Xfa9AJ09pkt0AHFPQtZUtlM28pCOnon6ArdIJW1fVyDP
+HOLDER_DB_PATH=/opt/holder-action/data/trading.db
+PORT=8002
+ENVEOF
 
 echo "当前 .env（已脱敏）："
 grep -v "API_KEY" .env || true
