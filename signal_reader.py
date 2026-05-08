@@ -4,6 +4,8 @@ import re
 from datetime import datetime
 from typing import Optional, Dict
 
+MAX_SIGNAL_AGE_HOURS = 48
+
 # 指向大模型金融分析项目根目录，部署时通过环境变量覆盖
 FINANCE_ROOT = os.environ.get(
     "FINANCE_PROJECT_ROOT",
@@ -79,6 +81,23 @@ def get_file_mtime(asset: str) -> Optional[str]:
         return None
 
 
+def get_signal_staleness(asset: str) -> dict:
+    """Returns age info for a signal file: {hours_old, is_stale, mtime}."""
+    filename = SIGNAL_FILES.get(_normalize_asset_key(asset), "")
+    filepath = os.path.join(FINANCE_ROOT, filename)
+    try:
+        mtime = os.path.getmtime(filepath)
+        dt = datetime.fromtimestamp(mtime)
+        hours_old = (datetime.now() - dt).total_seconds() / 3600
+        return {
+            "mtime": dt.strftime("%Y-%m-%d %H:%M"),
+            "hours_old": round(hours_old, 1),
+            "is_stale": hours_old > MAX_SIGNAL_AGE_HOURS,
+        }
+    except Exception:
+        return {"mtime": None, "hours_old": None, "is_stale": True}
+
+
 def read_signal(asset: str) -> Optional[Dict]:
     filename = SIGNAL_FILES.get(_normalize_asset_key(asset))
     if not filename:
@@ -119,6 +138,8 @@ def extract_signal_summary(asset: str) -> Optional[Dict]:
     if not analyses:
         return None
     first = analyses[0]
+    staleness = get_signal_staleness(asset)
+    stale_flag = " ⚠️【信号已过期，超过48小时，请谨慎参考】" if staleness["is_stale"] else ""
     return {
         "asset": asset,
         "action": first.get("action", "no_trade"),
@@ -133,7 +154,10 @@ def extract_signal_summary(asset: str) -> Optional[Dict]:
         "invalidation_condition": first.get("invalidation_condition"),
         "justification": first.get("justification"),
         "market_sentiment": raw.get("overall_market_sentiment") or raw.get("macro_environment"),
-        "analysis_date": get_file_mtime(asset),
+        "analysis_date": staleness["mtime"],
+        "hours_old": staleness["hours_old"],
+        "is_stale": staleness["is_stale"],
+        "stale_flag": stale_flag,
         "raw": raw,
     }
 

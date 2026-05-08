@@ -152,19 +152,34 @@ def generate_advice(positions: List[dict], signals: dict, model_override: Option
     positions: 持仓列表（来自截图解析或数据库）
     signals: 各资产信号摘要 {asset: signal_summary}
     """
-    # 过滤掉 None 值的信号
-    active_signals = {
-        k: {key: v for key, v in sig.items() if key != "raw"}
-        for k, sig in signals.items()
-        if sig and sig.get("action")
-    }
+    # 分离新鲜信号和过期信号
+    fresh_signals = {}
+    stale_signals = {}
+    for k, sig in signals.items():
+        if not sig or not sig.get("action"):
+            continue
+        clean = {key: v for key, v in sig.items() if key != "raw"}
+        if sig.get("is_stale"):
+            stale_signals[k] = clean
+        else:
+            fresh_signals[k] = clean
+
+    stale_warning = ""
+    if stale_signals:
+        stale_assets = ", ".join(stale_signals.keys())
+        stale_warning = (
+            f"\n\n⚠️ 以下资产的信号已超过 48 小时未更新（{stale_assets}），"
+            f"时效性存疑。对这些资产的操作建议必须降低确信度，urgency 降级为 low，"
+            "并在 reason 中注明'信号已过期，请核实后再操作'。\n"
+        )
+
+    signals_section = json.dumps({**fresh_signals, **stale_signals}, ensure_ascii=False, indent=2)
 
     user_content = f"""当前持仓：
 {json.dumps(positions, ensure_ascii=False, indent=2)}
 
 大模型金融分析系统最新信号：
-{json.dumps(active_signals, ensure_ascii=False, indent=2)}
-
+{signals_section}{stale_warning}
 请给出调仓建议。"""
 
     model = _get_model(model_override)

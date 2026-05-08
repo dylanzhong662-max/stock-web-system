@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sqlite3
+from datetime import datetime
 from typing import AsyncGenerator
 
 import data_fetcher
@@ -46,7 +47,7 @@ class PortfolioResearch:
             return "暂无开仓持仓，无法生成报告。", []
 
         tickers = [p["ticker"] for p in positions]
-        enriched, rag_results = await asyncio.gather(
+        enriched, rag_results, tavily_results = await asyncio.gather(
             self._enrich_positions(positions),
             rag_client.search_news(
                 query=" ".join(tickers) + " portfolio risk earnings outlook",
@@ -54,8 +55,12 @@ class PortfolioResearch:
                 data_types=["news", "earnings", "sec_filing", "insider"],
                 top_k=8,
             ),
+            data_fetcher.search(
+                " ".join(tickers[:6]) + " earnings outlook risk 2025",
+                max_results=6,
+            ),
         )
-        rag_context = rag_client.fmt_news_context(rag_results)
+        rag_context = self._build_news_context(rag_results, tavily_results)
         prompt = self._build_prompt(enriched, rag_context)
 
         chunks = []
@@ -83,7 +88,7 @@ class PortfolioResearch:
             return
 
         tickers = [p["ticker"] for p in positions]
-        enriched, rag_results = await asyncio.gather(
+        enriched, rag_results, tavily_results = await asyncio.gather(
             self._enrich_positions(positions),
             rag_client.search_news(
                 query=" ".join(tickers) + " portfolio risk earnings outlook",
@@ -91,8 +96,12 @@ class PortfolioResearch:
                 data_types=["news", "earnings", "sec_filing", "insider"],
                 top_k=8,
             ),
+            data_fetcher.search(
+                " ".join(tickers[:6]) + " earnings outlook risk 2025",
+                max_results=6,
+            ),
         )
-        rag_context = rag_client.fmt_news_context(rag_results)
+        rag_context = self._build_news_context(rag_results, tavily_results)
         prompt = self._build_prompt(enriched, rag_context)
 
         chunks = []
@@ -182,6 +191,7 @@ class PortfolioResearch:
         with open(_PROMPT_FILE, encoding="utf-8") as f:
             template = f.read()
 
+        data_fetch_ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
         lines = []
         for p in positions:
             fin = p.get("financial", {})
@@ -189,6 +199,7 @@ class PortfolioResearch:
             pnl_str = f"{pnl * 100:+.1f}%" if pnl is not None else "N/A"
             beta_str = self._fmt_beta(p.get("beta_data"))
             atr_str = self._fmt_atr(p.get("atr_data"), p.get("entry_price"))
+            fetch_note = fin.get("fetched_at", data_fetch_ts)
             lines.append(
                 f"- **{p['ticker']}** ({p.get('asset_name', '')}): "
                 f"成本 {p.get('entry_price', 'N/A')} | 盈亏 {pnl_str} | "
@@ -196,7 +207,8 @@ class PortfolioResearch:
                 f"ATR止损位: {atr_str} | "
                 f"毛利率 {fin.get('gross_margin', 'N/A')} | "
                 f"Forward PE {fin.get('pe_forward', 'N/A')} | "
-                f"营收增速 {fin.get('revenue_growth', 'N/A')}"
+                f"营收增速 {fin.get('revenue_growth', 'N/A')} | "
+                f"财务数据抓取时间: {fetch_note}"
             )
 
         positions_text = "\n".join(lines)
@@ -262,6 +274,17 @@ class PortfolioResearch:
             flag = " ⚠️ 高度相关" if abs(v) >= 0.7 else ""
             lines.append(f"  - {k}: {v:.2f}{flag}")
         return "\n".join(lines) if lines else "暂无数据"
+
+    def _build_news_context(self, rag_results: list[dict], tavily_results: list[dict]) -> str:
+        """RAG 优先，RAG 空时用 Tavily 兜底，两者均空时返回空字符串"""
+        if rag_results:
+            return rag_client.fmt_news_context(rag_results)
+        if tavily_results:
+            return "\n\n".join(
+                f"**{r['title']}**（{r.get('published_date', '')}）\n{r['content'][:400]}"
+                for r in tavily_results
+            )
+        return ""
 
     async def _stream(self, prompt: str, model: str) -> AsyncGenerator[str, None]:
         kwargs: dict = dict(

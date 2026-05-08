@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+from datetime import datetime, timedelta
 from typing import AsyncGenerator
 
 import data_fetcher
@@ -22,6 +23,25 @@ _TICKER_STOPWORDS = {
     "AI", "NN", "CV", "NLP", "RL", "GAN", "CNN", "RNN", "IT", "EV", "AR", "VR",
     "PC", "OS", "KB", "MB", "GB", "TB", "PB", "EB",
 }
+
+
+_STALE_NEWS_DAYS = 30  # news older than this gets a stale flag in the prompt
+
+
+def _annotate_news_staleness(results: list[dict]) -> list[dict]:
+    """Adds a staleness warning to news items older than _STALE_NEWS_DAYS."""
+    cutoff = (datetime.utcnow() - timedelta(days=_STALE_NEWS_DAYS)).strftime("%Y-%m-%d")
+    annotated = []
+    for r in results:
+        item = dict(r)
+        pd = item.get("published_date", "")
+        if pd and pd < cutoff:
+            item["_stale"] = True
+            item["title"] = f"[⚠️旧数据 {pd}] " + item.get("title", "")
+        else:
+            item["_stale"] = False
+        annotated.append(item)
+    return annotated
 
 
 def _extract_tickers(search_results: list[dict]) -> list[str]:
@@ -78,18 +98,30 @@ class ChainAnalyzer:
         with open(_PROMPT_FILE, encoding="utf-8") as f:
             template = f.read()
 
+        annotated = _annotate_news_staleness(search_results)
+        fresh = [r for r in annotated if not r.get("_stale")]
+        stale = [r for r in annotated if r.get("_stale")]
+        stale_warning = (
+            f"\n\n> ⚠️ 注意：以下 {len(stale)} 条新闻发布于 {_STALE_NEWS_DAYS} 天前，"
+            f"仅供背景参考，**不得作为当前市场判断依据**。\n"
+            if stale else ""
+        )
+        # Fresh news first, then stale (clearly separated)
+        ordered = fresh + stale
+
         # P0: 800-char content; P3: include URL for citation
         news_text = "\n\n".join(
             f"**{r['title']}**"
-            + (f"（{r['published_date']}）" if r.get("published_date") else "")
+            + (f"（{r['published_date']}）" if r.get("published_date") else "（发布日期未知）")
             + (f" — [原文]({r['url']})" if r.get("url") else "")
             + f"\n{r['content'][:800]}"
-            for r in search_results
-        )
+            for r in ordered
+        ) + stale_warning
 
+        fetch_ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
         # P2: real financial data as ground truth
         fin_text = (
-            "\n".join(_fmt_financial(f) for f in financial_data)
+            f"数据抓取时间：{fetch_ts}\n" + "\n".join(_fmt_financial(f) for f in financial_data)
             if financial_data
             else "（本次未匹配到代表性上市公司财务数据，财务数字以搜索结果为准）"
         )
