@@ -120,7 +120,8 @@ class CompanyAnalyzer:
         kwargs: dict = dict(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=4000,
+            max_tokens=8000,
+            temperature=0.3,
             stream=True,
         )
 

@@ -7,6 +7,7 @@ from typing import AsyncGenerator
 import data_fetcher
 import rag_client
 import report_generator
+import predictions
 from llm_client import get_client, resolve_model, is_deepseek
 
 _PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "chain_analysis.md")
@@ -195,6 +196,14 @@ class ChainAnalyzer:
         source_note = f"Tavily × {len(all_results)} 条 + yfinance × {len(fin_data)} 只 + {model}"
         report = report_generator.format_report(content, source_note)
         report_generator.save_cache("chain", industry, report)
+
+        entry_prices = {f["ticker"]: f.get("current_price") for f in fin_data
+                        if f.get("ticker") and f.get("current_price")}
+        try:
+            await predictions.extract_via_llm(content, "chain", industry, entry_prices)
+        except Exception:
+            pass  # 预测落库失败不阻塞主流程
+
         return report, False
 
     async def stream(self, industry: str, model: str | None = None) -> AsyncGenerator[str, None]:
@@ -217,11 +226,19 @@ class ChainAnalyzer:
         report = report_generator.format_report(content, source_note)
         report_generator.save_cache("chain", industry, report)
 
+        entry_prices = {f["ticker"]: f.get("current_price") for f in fin_data
+                        if f.get("ticker") and f.get("current_price")}
+        try:
+            predictions.save_from_report("chain", industry, content, entry_prices)
+        except Exception:
+            pass
+
     async def _stream(self, prompt: str, model: str) -> AsyncGenerator[str, None]:
         kwargs: dict = dict(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=12000,
+            max_tokens=16000,
+            temperature=0.3,
             stream=True,
         )
         stream = await get_client(model).chat.completions.create(**kwargs)

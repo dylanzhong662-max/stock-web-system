@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from database import engine, Base
-import models  # noqa: F401
+import models  # noqa: F401 — ensures all ORM models (including WatchItem) are registered
 from llm_client import AVAILABLE_MODELS, resolve_model
 
 Base.metadata.create_all(bind=engine)

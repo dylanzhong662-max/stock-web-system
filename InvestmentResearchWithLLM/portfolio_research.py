@@ -7,6 +7,9 @@ from typing import AsyncGenerator
 import data_fetcher
 import rag_client
 import report_generator
+import predictions
+import transaction_costs
+import watchlist
 from llm_client import get_client, resolve_model, is_deepseek
 from company_analyzer import CompanyAnalyzer
 
@@ -72,6 +75,7 @@ class PortfolioResearch:
             content, f"holderAndAction trading.db + FMP + Tavily + {model}"
         )
         report_generator.save_cache("portfolio", "latest", report)
+        await self._save_predictions(content, enriched)
         return report, enriched
 
     async def stream(self, model: str | None = None) -> AsyncGenerator[str, None]:
@@ -114,26 +118,55 @@ class PortfolioResearch:
             content, f"holderAndAction trading.db + FMP + Tavily + {model}"
         )
         report_generator.save_cache("portfolio", "latest", report)
+        await self._save_predictions(content, enriched)
+
+    async def _save_predictions(self, content: str, enriched: list[dict]):
+        entry_prices: dict[str, float] = {}
+        for p in enriched:
+            fin = p.get("financial", {}) or {}
+            price = fin.get("current_price") or p.get("entry_price")
+            if price:
+                entry_prices[p["ticker"]] = float(price)
+        try:
+            await predictions.extract_via_llm(content, "portfolio", "latest", entry_prices)
+        except Exception:
+            pass
+        # 自动提取监控清单
+        try:
+            await watchlist.extract_and_save(content)
+        except Exception:
+            pass
 
     async def _enrich_positions(self, positions: list[dict]) -> list[dict]:
         tickers = [p["ticker"] for p in positions]
 
-        # ATR 止损位需要 entry_price，无 entry_price 的给 None
         async def _safe_atr(pos: dict):
             ep = pos.get("entry_price")
             if ep is None:
                 return None
             return await data_fetcher.get_atr_stops(pos["ticker"], float(ep))
 
-        fin_map, beta_results, corr_data, atr_results = await asyncio.gather(
+        # 重量级计算（价格序列），FMP 无严格限速，30s 已足够；超时走降级（空 dict/None）
+        async def _timed(coro, default, label):
+            try:
+                return await asyncio.wait_for(coro, timeout=30)
+            except asyncio.TimeoutError:
+                return default
+            except Exception:
+                return default
+
+        fin_map, beta_results, factor_map, corr_data, atr_results = await asyncio.gather(
             data_fetcher.get_batch_stock_data(tickers),
             asyncio.gather(*[data_fetcher.get_beta(t) for t in tickers], return_exceptions=True),
-            data_fetcher.get_correlation_matrix(tickers),
+            _timed(data_fetcher.get_batch_factor_exposures(tickers), {}, "factors"),
+            _timed(data_fetcher.get_correlation_matrix(tickers), {}, "corr"),
             asyncio.gather(*[_safe_atr(p) for p in positions], return_exceptions=True),
             return_exceptions=True,
         )
         if not isinstance(fin_map, dict):
             fin_map = {}
+        if not isinstance(factor_map, dict):
+            factor_map = {}
 
         enriched = []
         for pos, beta_raw, atr_raw in zip(
@@ -145,6 +178,7 @@ class PortfolioResearch:
             fin_data = fin_map.get(pos["ticker"], {"ticker": pos["ticker"], "source": "unavailable"})
             entry["financial"] = fin_data
             entry["beta_data"] = beta_raw if isinstance(beta_raw, dict) else None
+            entry["factor_data"] = factor_map.get(pos["ticker"])
             entry["atr_data"] = atr_raw if isinstance(atr_raw, dict) else None
             current_price = fin_data.get("current_price")
             entry_price = pos.get("entry_price")
@@ -163,11 +197,31 @@ class PortfolioResearch:
         beta = beta_data.get("beta")
         r2 = beta_data.get("r2")
         bench = beta_data.get("benchmark", "SPY")
+        period = beta_data.get("period", "3y")
         if beta is None:
             return "N/A"
         r2_note = f"R²={r2:.2f}" if r2 is not None else ""
         warn = " ⚠️低置信" if r2 is not None and r2 < 0.1 else ""
-        return f"{beta:.2f}x vs {bench}（{r2_note}{warn}）"
+        return f"{beta:.2f}x vs {bench}（{period}，{r2_note}{warn}）"
+
+    def _fmt_factors(self, factor_data: dict | None) -> str:
+        if not factor_data:
+            return "N/A（数据不可用）"
+        parts = []
+        for name, label in [("mkt", "Mkt"), ("smb", "SMB"), ("hml", "HML"), ("umd", "UMD")]:
+            f = factor_data.get(name)
+            if not f:
+                continue
+            sig = "*" if f.get("significant") else ""
+            parts.append(f"{label}={f['beta']:+.2f}{sig}(t_NW={f['t_stat']:+.1f})")
+        alpha = factor_data.get("alpha_annual")
+        alpha_t = factor_data.get("alpha_t_stat")
+        r2 = factor_data.get("r2")
+        source = factor_data.get("source", "")
+        tail = f" | α年化={alpha:+.2%}(t_NW={alpha_t:+.1f})" if alpha is not None else ""
+        r2_note = f" | R²={r2:.2f}" if r2 is not None else ""
+        src_tag = f" [{source}]" if source else ""
+        return " ".join(parts) + tail + r2_note + f"  (* = |t_NW|>2 显著){src_tag}"
 
     def _fmt_atr(self, atr_data: dict | None, entry_price) -> str:
         if not atr_data:
@@ -198,12 +252,14 @@ class PortfolioResearch:
             pnl = p.get("pnl_pct")
             pnl_str = f"{pnl * 100:+.1f}%" if pnl is not None else "N/A"
             beta_str = self._fmt_beta(p.get("beta_data"))
+            factor_str = self._fmt_factors(p.get("factor_data"))
             atr_str = self._fmt_atr(p.get("atr_data"), p.get("entry_price"))
             fetch_note = fin.get("fetched_at", data_fetch_ts)
             lines.append(
                 f"- **{p['ticker']}** ({p.get('asset_name', '')}): "
                 f"成本 {p.get('entry_price', 'N/A')} | 盈亏 {pnl_str} | "
                 f"Beta {beta_str} | "
+                f"因子暴露: {factor_str} | "
                 f"ATR止损位: {atr_str} | "
                 f"毛利率 {fin.get('gross_margin', 'N/A')} | "
                 f"Forward PE {fin.get('pe_forward', 'N/A')} | "
@@ -213,18 +269,37 @@ class PortfolioResearch:
 
         positions_text = "\n".join(lines)
         weighted_beta_str = self._calc_weighted_beta(positions)
+        portfolio_factor_str = self._calc_portfolio_factors(positions)
         corr_data = positions[0].get("_corr_data", {}) if positions else {}
         corr_text = self._fmt_corr(corr_data)
         rag_text = rag_context if rag_context else "（RAG 服务未配置或暂无相关新闻）"
 
-        return (
+        # 交易成本估算
+        costs_data = transaction_costs.estimate_portfolio_costs(positions)
+        costs_text = transaction_costs.format_cost_section(costs_data)
+
+        # 监控清单上下文
+        watchlist_ctx = watchlist.build_watchlist_context()
+
+        rendered = (
             template
             .replace("{positions_data}", positions_text)
             .replace("{count}", str(len(positions)))
             .replace("{weighted_beta}", weighted_beta_str)
             .replace("{correlation_matrix}", corr_text)
             .replace("{rag_news_context}", rag_text)
+            .replace("{transaction_costs}", costs_text)
+            .replace("{watchlist_context}", watchlist_ctx)
         )
+        if "{portfolio_factor_exposure}" in rendered:
+            rendered = rendered.replace("{portfolio_factor_exposure}", portfolio_factor_str)
+        else:
+            rendered = rendered.replace(
+                "- 持仓相关性矩阵",
+                f"- 组合因子暴露（市值加权，3y OLS）：\n{portfolio_factor_str}\n- 持仓相关性矩阵",
+                1,
+            )
+        return rendered
 
     def _calc_weighted_beta(self, positions: list[dict]) -> str:
         """市值加权 Beta（quantity × current_price），R²<0.1 的持仓降权 50%"""
@@ -238,7 +313,7 @@ class PortfolioResearch:
             if not beta_data or beta_data.get("beta") is None:
                 continue
             beta = beta_data["beta"]
-            r2 = beta_data.get("r2", 1.0)
+            r2 = beta_data.get("r2") if beta_data.get("r2") is not None else 1.0
 
             fin = p.get("financial", {})
             price = fin.get("current_price") or p.get("entry_price")
@@ -247,7 +322,6 @@ class PortfolioResearch:
                 continue
 
             weight = float(qty) * float(price)
-            # 低置信 beta 降权 50%
             if r2 < 0.1:
                 weight *= 0.5
                 low_confidence.append(p["ticker"])
@@ -265,15 +339,82 @@ class PortfolioResearch:
             note += f"，低置信降权: {', '.join(low_confidence)}"
         return f"{avg:.2f}x（{note}）"
 
+    def _calc_portfolio_factors(self, positions: list[dict]) -> str:
+        """市值加权的组合 Fama-French 因子暴露"""
+        factor_sums = {"mkt": 0.0, "smb": 0.0, "hml": 0.0, "umd": 0.0}
+        total_weight = 0.0
+        valid = 0
+
+        for p in positions:
+            fdata = p.get("factor_data")
+            if not fdata:
+                continue
+            fin = p.get("financial", {})
+            price = fin.get("current_price") or p.get("entry_price")
+            qty = p.get("quantity", 1)
+            if price is None:
+                continue
+            weight = float(qty) * float(price)
+            for fname in factor_sums:
+                f = fdata.get(fname)
+                if f and f.get("beta") is not None:
+                    factor_sums[fname] += f["beta"] * weight
+            total_weight += weight
+            valid += 1
+
+        if total_weight == 0 or valid == 0:
+            return "N/A（无可用多因子数据，可能 yfinance 429）"
+
+        avgs = {k: v / total_weight for k, v in factor_sums.items()}
+        # 组合风格解读
+        interpret = []
+        if abs(avgs["mkt"]) > 0:
+            interpret.append("进攻型" if avgs["mkt"] > 1.1 else "防御型" if avgs["mkt"] < 0.9 else "市场型")
+        if avgs["smb"] > 0.2:
+            interpret.append("偏小盘")
+        elif avgs["smb"] < -0.2:
+            interpret.append("偏大盘")
+        if avgs["hml"] > 0.2:
+            interpret.append("偏价值")
+        elif avgs["hml"] < -0.2:
+            interpret.append("偏成长")
+        if avgs["umd"] > 0.2:
+            interpret.append("偏动量")
+        elif avgs["umd"] < -0.2:
+            interpret.append("偏反转")
+        tag = "、".join(interpret) if interpret else "风格不明显"
+
+        return (
+            f"Mkt={avgs['mkt']:+.2f} | SMB={avgs['smb']:+.2f} | "
+            f"HML={avgs['hml']:+.2f} | UMD={avgs['umd']:+.2f}  → **{tag}** "
+            f"（{valid}/{len(positions)} 持仓有数据）"
+        )
+
     def _fmt_corr(self, corr_data: dict) -> str:
         pairs = corr_data.get("pairs", {})
+        tail_pairs = corr_data.get("tail_pairs", {})
+        tail_days = corr_data.get("tail_days", 0)
+        period = corr_data.get("period", "3y")
+
         if not pairs:
             return "数据不足，无法计算"
-        lines = []
+
+        lines = [f"  全样本相关性（{period} 日收益率 Pearson）："]
         for k, v in sorted(pairs.items()):
             flag = " ⚠️ 高度相关" if abs(v) >= 0.7 else ""
-            lines.append(f"  - {k}: {v:.2f}{flag}")
-        return "\n".join(lines) if lines else "暂无数据"
+            lines.append(f"    - {k}: {v:+.2f}{flag}")
+
+        if tail_pairs:
+            lines.append(f"  尾部相关性（SPY 底部 10% 下跌日，n={tail_days}）：")
+            for k, v in sorted(tail_pairs.items()):
+                full = pairs.get(k)
+                delta = f"（vs 全样本 {full:+.2f}，+{v - full:.2f}）" if full is not None else ""
+                flag = " ⚠️ 分散化在危机时失效" if v >= 0.7 and (full is None or v - full >= 0.15) else ""
+                lines.append(f"    - {k}: {v:+.2f}{delta}{flag}")
+        else:
+            lines.append("  尾部相关性：数据不足（<20 个尾部日）")
+
+        return "\n".join(lines)
 
     def _build_news_context(self, rag_results: list[dict], tavily_results: list[dict]) -> str:
         """RAG 优先，RAG 空时用 Tavily 兜底，两者均空时返回空字符串"""
@@ -290,7 +431,8 @@ class PortfolioResearch:
         kwargs: dict = dict(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=6000,
+            max_tokens=12000,
+            temperature=0.3,
             stream=True,
         )
 

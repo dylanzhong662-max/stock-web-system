@@ -91,6 +91,16 @@ POST /api/research/chain           body: {"industry": "AI算力"}
 POST /api/research/company         body: {"ticker": "NVDA"}
 POST /api/research/portfolio       无 body，自动读 holderAndAction 持仓
 GET  /api/research/reports         历史缓存列表，?type=chain&limit=10
+
+# 预测分析
+GET  /api/research/predictions/analytics    完整分析（校准+walk-forward+IC decay）
+GET  /api/research/predictions/calibration  Confidence 校准（Brier Score）
+
+# 监控清单
+GET  /api/research/watchlist                查看当前活跃监控项
+POST /api/research/watchlist                手动添加监控项
+DELETE /api/research/watchlist/{id}          停用监控项
+PUT  /api/research/watchlist/{id}/value     更新观测值
 ```
 
 ---
@@ -109,10 +119,39 @@ orchestrator 调 deepseek-v4-pro 识别意图，返回 `{"intent": "chain|compan
 
 ## 数据来源与可信度
 
+- **Kenneth French 因子数据**：真实日度 Mkt-RF/SMB/HML/UMD（优先），不可用时 fallback ETF 代理
 - **Tavily 搜索**：用于行业动态和新闻背景，不作为估值计算依据
 - **yfinance**：市值/PE/毛利率/营收增速，报告中标注"仅供参考"
-- **AKShare**：A 股个股基本信息（`data_fetcher.get_cn_stock`）
+- **AKShare**：A 股个股基本信息 + 美股日线价格序列
 - **精确估值**：需在 Claude CLI 中运行 `/equity-research <ticker>`（IBES 共识数据，MCP 工具，服务端无法调用）
+
+## 量化分析增强
+
+- **Newey-West HAC 标准误**：修正日度收益率自相关，t-stat 更保守准确
+- **数据质量审计**：自动检测 |日收益率|>50% 的极端观测、价格停滞，回归前剔除
+- **交易成本模型**：每条加仓/减仓建议附带往返成本估算（佣金+价差+市场冲击）
+- **预测校准**：Brier Score + confidence 分桶命中率，验证模型置信度可信度
+- **Walk-Forward**：按月窗口统计命中率稳定性（变异系数 CV<0.3 为稳定）
+- **IC Decay**：不同 horizon 的方向信息系数衰减曲线
+
+## 监控清单系统
+
+持仓分析报告生成后，自动从第五章"关键变量监控清单"中提取结构化监控项落库。
+下次分析时，将现有监控清单注入 prompt，让 LLM 评估变化情况。
+
+快速添加监控：
+```bash
+# 手动添加
+curl -X POST http://localhost:8002/api/research/watchlist \
+  -H "Content-Type: application/json" \
+  -d '{"variable": "NVDA FY26Q2 Data Center 营收", "ticker": "NVDA", "frequency": "quarterly", "bullish_signal": ">$30B", "bearish_signal": "<$25B", "priority": 1}'
+
+# 查看当前监控
+curl http://localhost:8002/api/research/watchlist
+
+# 停用
+curl -X DELETE http://localhost:8002/api/research/watchlist/3
+```
 
 ---
 
