@@ -133,15 +133,14 @@ def run_and_push(webhook_url: str):
             print("当前无开仓持仓，跳过推送")
             return
 
+        from pnl import calc_pnl
+
         positions_data = []
         for p in positions_orm:
             current_price = price_fetcher.get_current_price(p.asset)
             pnl_pct = None
             if current_price and p.entry_price:
-                if p.direction == "long":
-                    pnl_pct = (current_price - p.entry_price) / p.entry_price * 100
-                else:
-                    pnl_pct = (p.entry_price - current_price) / p.entry_price * 100
+                _, pnl_pct = calc_pnl(p.direction, p.entry_price, current_price, p.quantity)
             positions_data.append({
                 "asset": p.asset,
                 "ticker": p.ticker,
@@ -152,7 +151,7 @@ def run_and_push(webhook_url: str):
                 "cost_basis": p.cost_basis_usd,
                 "stop_loss": p.stop_loss,
                 "profit_target": p.profit_target,
-                "unrealized_pnl_pct": round(pnl_pct, 2) if pnl_pct is not None else None,
+                "unrealized_pnl_pct": pnl_pct,
             })
 
         print(f"读取到 {len(positions_data)} 条持仓，正在调用 DeepSeek R1 生成建议...")

@@ -14,6 +14,7 @@ from schemas import PositionCreate, PositionUpdate, PositionClose, PositionRespo
 import price_fetcher
 import signal_reader
 import sync
+from pnl import calc_pnl
 
 router = APIRouter()
 
@@ -21,7 +22,6 @@ router = APIRouter()
 def _compute(pos: Position, current_price: Optional[float] = None) -> dict:
     if current_price is None:
         current_price = price_fetcher.get_current_price(pos.asset, pos.ticker or "")
-    # 先用 ticker 查信号（去掉交易所后缀），再 fallback 到 asset
     sig = signal_reader.extract_signal_summary(pos.ticker or pos.asset) or \
           signal_reader.extract_signal_summary(pos.asset)
 
@@ -29,9 +29,8 @@ def _compute(pos: Position, current_price: Optional[float] = None) -> dict:
     position_status = "HOLD"
 
     if current_price:
+        pnl_usd, pnl_pct = calc_pnl(pos.direction, pos.entry_price, current_price, pos.quantity)
         if pos.direction == "long":
-            pnl_usd = (current_price - pos.entry_price) * pos.quantity
-            pnl_pct = (current_price - pos.entry_price) / pos.entry_price * 100
             if pos.stop_loss:
                 dist_stop = (current_price - pos.stop_loss) / pos.entry_price * 100
                 if current_price <= pos.stop_loss:
@@ -41,8 +40,6 @@ def _compute(pos: Position, current_price: Optional[float] = None) -> dict:
                 if current_price >= pos.profit_target:
                     position_status = "TARGET_REACHED"
         else:
-            pnl_usd = (pos.entry_price - current_price) * pos.quantity
-            pnl_pct = (pos.entry_price - current_price) / pos.entry_price * 100
             if pos.stop_loss:
                 dist_stop = (pos.stop_loss - current_price) / pos.entry_price * 100
                 if current_price >= pos.stop_loss:
@@ -86,6 +83,13 @@ def list_positions(db: Session = Depends(get_db)):
     pos_pairs = list({(p.asset, p.ticker or p.asset) for p in positions})
     prices = price_fetcher.get_prices_batch(pos_pairs)
     return [_to_response(p, current_price=prices.get(p.asset)) for p in positions]
+
+
+@router.get("/positions/tickers")
+def list_tickers(db: Session = Depends(get_db)):
+    """轻量接口：只返回当前持仓 ticker 列表，不拉价格。供 RAG 系统同步用。"""
+    positions = db.query(Position).filter(Position.status == "open").all()
+    return [{"asset": p.asset, "ticker": p.ticker} for p in positions]
 
 
 @router.post("/positions/bulk-import")
@@ -155,12 +159,7 @@ def close_position(position_id: int, body: PositionClose, db: Session = Depends(
     if not pos:
         raise HTTPException(status_code=404, detail="Position not found")
 
-    if pos.direction == "long":
-        pnl_usd = (body.exit_price - pos.entry_price) * pos.quantity
-        pnl_pct = (body.exit_price - pos.entry_price) / pos.entry_price * 100
-    else:
-        pnl_usd = (pos.entry_price - body.exit_price) * pos.quantity
-        pnl_pct = (pos.entry_price - body.exit_price) / pos.entry_price * 100
+    pnl_usd, pnl_pct = calc_pnl(pos.direction, pos.entry_price, body.exit_price, pos.quantity)
 
     try:
         d1 = date.fromisoformat(pos.entry_date[:10])
@@ -180,8 +179,8 @@ def close_position(position_id: int, body: PositionClose, db: Session = Depends(
         exit_date=body.exit_date,
         quantity=pos.quantity,
         cost_basis_usd=pos.cost_basis_usd,
-        realized_pnl_usd=round(pnl_usd, 2),
-        realized_pnl_pct=round(pnl_pct, 2),
+        realized_pnl_usd=pnl_usd,
+        realized_pnl_pct=pnl_pct,
         exit_reason=body.exit_reason,
         holding_days=holding_days,
         notes=body.notes,

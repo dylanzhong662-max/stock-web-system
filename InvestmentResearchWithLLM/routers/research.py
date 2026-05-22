@@ -8,6 +8,7 @@ from portfolio_research import PortfolioResearch
 import predictions as predictions_mod
 import prediction_analytics
 import watchlist as watchlist_mod
+import watchlist_alerter
 
 router = APIRouter()
 _chain = ChainAnalyzer()
@@ -92,9 +93,12 @@ async def predictions_performance(
 
 
 @router.post("/predictions/resolve")
-async def resolve_predictions(max_rows: int = Query(200, ge=1, le=1000)):
-    """手动触发结算。建议由 cron 每日调用一次。"""
-    return await predictions_mod.resolve_due(max_rows=max_rows)
+async def resolve_predictions(
+    max_rows: int = Query(200, ge=1, le=1000),
+    force: bool = Query(False, description="true=强制结算未到期预测（用当前价格），false=只结算已到期的"),
+):
+    """手动触发结算。force=true 会用当前价格提前结算（测试用）。"""
+    return await predictions_mod.resolve_due(max_rows=max_rows, force=force)
 
 
 # ---------------------------------------------------------------------------
@@ -176,3 +180,17 @@ async def update_watch_value(item_id: int, body: WatchItemUpdate):
         ok = watchlist_mod.update_value(item_id, body.current_value)
         return {"success": ok}
     return {"success": False, "error": "current_value required"}
+
+
+# ---------------------------------------------------------------------------
+# 监控预警 → 飞书推送
+# ---------------------------------------------------------------------------
+
+@router.post("/watchlist/check-alerts")
+async def check_watchlist_alerts(
+    notify: bool = Query(True, description="是否发送飞书通知"),
+):
+    """检查所有监控项阈值，触发时推飞书。可 cron 定时调用。"""
+    if notify:
+        return await watchlist_alerter.run_check_and_notify()
+    return await watchlist_alerter.check_alerts()

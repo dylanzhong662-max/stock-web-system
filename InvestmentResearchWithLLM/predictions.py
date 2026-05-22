@@ -215,25 +215,55 @@ async def extract_via_llm(
 # ---------------------------------------------------------------------------
 
 async def _fetch_price(ticker: str, as_of: datetime) -> float | None:
-    """拉某日收盘价。ticker 支持 A/H/US 股，加密用 BTC/ETH。"""
+    """拉收盘价。优先用 FMP/AKShare（服务器上 yfinance 不稳定）。
+
+    as_of 接近当前时间时直接用实时价格；历史价格走 AV 日线缓存。
+    """
     import data_fetcher
-    # 用 yfinance 拉一段数据取 as_of 或之前最近一日
-    def _sync():
-        import yfinance as yf
-        import pandas as pd
-        yf_sym = data_fetcher._yf_ticker(ticker)
-        start = (as_of - timedelta(days=10)).strftime("%Y-%m-%d")
-        end = (as_of + timedelta(days=2)).strftime("%Y-%m-%d")
+
+    # 清理 ticker（去 .US 后缀等）
+    clean = ticker.replace(".US", "").replace(".HK", "")
+
+    # 方式1：如果 as_of 在最近 3 天内，直接用 FMP profile 的实时价格
+    if (datetime.utcnow() - as_of).days <= 3:
         try:
+            result = await data_fetcher.get_batch_stock_data([clean])
+            data = result.get(clean, {})
+            price = data.get("current_price")
+            if price:
+                return float(price)
+        except Exception:
+            pass
+
+    # 方式2：AV/AKShare 日线取历史价格
+    try:
+        import pandas as pd
+        series = await data_fetcher._get_av_daily(clean)
+        if series:
+            # 转为 Series，找 ≤ as_of 的最近一天
+            s = pd.Series(series)
+            s.index = pd.to_datetime(s.index)
+            s = s.sort_index()
+            mask = s.index <= pd.Timestamp(as_of)
+            if mask.any():
+                return float(s[mask].iloc[-1])
+    except Exception:
+        pass
+
+    # 方式3：yfinance fallback
+    def _sync():
+        try:
+            import yfinance as yf
+            import pandas as pd
+            yf_sym = data_fetcher._yf_ticker(ticker)
+            start = (as_of - timedelta(days=10)).strftime("%Y-%m-%d")
+            end = (as_of + timedelta(days=2)).strftime("%Y-%m-%d")
             df = yf.download(yf_sym, start=start, end=end, progress=False, auto_adjust=True)
             if df.empty:
                 return None
             close = df["Close"].squeeze()
-            # 取 ≤ as_of 的最后一个收盘价
             close = close[close.index <= pd.Timestamp(as_of)]
-            if close.empty:
-                return None
-            return float(close.iloc[-1])
+            return float(close.iloc[-1]) if not close.empty else None
         except Exception:
             return None
     return await asyncio.get_event_loop().run_in_executor(None, _sync)
@@ -249,37 +279,43 @@ def _score_hit(direction: str, realized_return: float, threshold: float = 0.02) 
     return abs(realized_return) <= threshold
 
 
-async def resolve_due(max_rows: int = 200) -> dict:
-    """结算所有 resolve_at <= now 且未结算的预测"""
+async def resolve_due(max_rows: int = 200, force: bool = False) -> dict:
+    """结算预测。
+
+    force=False: 只结算 resolve_at <= now 的到期预测（正常模式）
+    force=True:  强制结算所有有 entry_price 的未结算预测（提前结算，用于验证系统）
+    """
     db = SessionLocal()
     try:
-        due: list[Prediction] = (
+        q = (
             db.query(Prediction)
             .filter(Prediction.resolved_at.is_(None))
-            .filter(Prediction.resolve_at <= datetime.utcnow())
             .filter(Prediction.entry_price.isnot(None))
             .filter(Prediction.ticker.isnot(None))
-            .limit(max_rows)
-            .all()
         )
+        if not force:
+            q = q.filter(Prediction.resolve_at <= datetime.utcnow())
+        due: list[Prediction] = q.limit(max_rows).all()
     finally:
         db.close()
 
     if not due:
-        return {"resolved": 0, "hit_rate": None}
+        return {"resolved": 0, "hit_rate": None, "message": "无可结算预测" + ("（所有预测尚未到期）" if not force else "")}
 
     resolved = 0
     hits = 0
+    now = datetime.utcnow()
 
     for p in due:
-        cur_price = await _fetch_price(p.ticker, p.resolve_at)
+        # force 模式用当前价格，正常模式用 resolve_at 时价格
+        price_date = now if force else p.resolve_at
+        cur_price = await _fetch_price(p.ticker, price_date)
         if cur_price is None or not p.entry_price or p.entry_price <= 0:
             continue
 
         rret = (cur_price - p.entry_price) / p.entry_price
 
-        # 基准：SPY 同期（仅 US 股；A/H 用对应指数可后续扩展）
-        bench = await _fetch_price("SPY", p.resolve_at)
+        bench = await _fetch_price("SPY", price_date)
         bench_entry = await _fetch_price("SPY", p.created_at)
         bret = None
         excess = None
@@ -293,7 +329,7 @@ async def resolve_due(max_rows: int = 200) -> dict:
         try:
             row = db.query(Prediction).filter(Prediction.id == p.id).first()
             if row:
-                row.resolved_at = datetime.utcnow()
+                row.resolved_at = now
                 row.resolved_price = cur_price
                 row.realized_return = rret
                 row.benchmark_return = bret

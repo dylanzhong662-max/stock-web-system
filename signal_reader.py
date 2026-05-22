@@ -1,8 +1,7 @@
-import json
 import os
-import re
 from datetime import datetime
 from typing import Optional, Dict
+from json_utils import parse_json_object
 
 MAX_SIGNAL_AGE_HOURS = 48
 
@@ -44,31 +43,7 @@ SCRIPT_MAP = {
 
 
 def parse_json_from_text(text: str) -> Optional[Dict]:
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    try:
-        return json.loads(text.strip())
-    except Exception:
-        pass
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except Exception:
-            pass
-    start = text.find("{")
-    if start >= 0:
-        depth = 0
-        for i, ch in enumerate(text[start:], start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start: i + 1])
-                    except Exception:
-                        break
-    return None
+    return parse_json_object(text)
 
 
 def get_file_mtime(asset: str) -> Optional[str]:

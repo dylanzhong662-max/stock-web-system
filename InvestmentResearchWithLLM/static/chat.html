@@ -485,6 +485,65 @@
   .num-neg { color: #f53f3f; }
   .empty   { text-align: center; color: var(--text-3); padding: 40px 0; font-size: 13px; }
 
+  /* ── 监控清单 & 分析 ── */
+  .watch-list { display: flex; flex-direction: column; gap: 8px; }
+  .watch-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .watch-item:hover { border-color: var(--blue-act); }
+  .watch-priority {
+    width: 6px; height: 6px; border-radius: 50%; margin-top: 6px; flex-shrink: 0;
+  }
+  .watch-priority.p1 { background: #f53f3f; }
+  .watch-priority.p2 { background: #FF7D00; }
+  .watch-priority.p3 { background: var(--text-3); }
+  .watch-info { flex: 1; min-width: 0; }
+  .watch-var { font-size: 13px; font-weight: 600; color: var(--text); }
+  .watch-ticker { font-size: 11px; color: var(--blue-brand); margin-left: 6px; }
+  .watch-signals { font-size: 12px; color: var(--text-2); margin-top: 3px; display: flex; gap: 12px; }
+  .watch-signals .bull { color: var(--success); }
+  .watch-signals .bear { color: #f53f3f; }
+  .watch-meta { font-size: 11px; color: var(--text-3); margin-top: 3px; }
+  .watch-del {
+    border: none; background: none; color: var(--text-3); cursor: pointer;
+    font-size: 16px; padding: 4px; border-radius: 4px;
+  }
+  .watch-del:hover { background: #ffece8; color: #f53f3f; }
+
+  .form-row { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+  .form-row label { font-size: 12px; color: var(--text-2); min-width: 60px; }
+  .form-row input, .form-row select {
+    flex: 1; font-size: 13px; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; outline: none; color: var(--text); background: var(--bg);
+  }
+  .form-row input:focus, .form-row select:focus { border-color: var(--blue-act); }
+
+  /* 分析面板 */
+  .analytics-section { margin-bottom: 20px; }
+  .analytics-section h4 {
+    font-size: 13px; font-weight: 600; color: var(--text);
+    margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+  }
+  .analytics-interp {
+    font-size: 12px; color: var(--text-2); padding: 8px 12px;
+    background: var(--bg); border-radius: 6px; margin-bottom: 10px;
+  }
+  .cal-bar {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    font-size: 12px; color: var(--text-2);
+  }
+  .cal-bar-fill {
+    height: 8px; border-radius: 4px; transition: width 0.3s;
+  }
+  .cal-bar-track {
+    flex: 1; height: 8px; background: var(--border); border-radius: 4px;
+    position: relative; overflow: hidden;
+  }
+
   @media (max-width: 640px) {
     .sidebar { display: none; }
     .welcome-cards { grid-template-columns: 1fr; }
@@ -554,6 +613,21 @@
     <div class="sidebar-section">预测跟踪</div>
     <button class="sidebar-btn" onclick="openPredictions()">
       <span class="icon">🎯</span>命中率 / IC
+    </button>
+    <button class="sidebar-btn" onclick="openAnalytics()">
+      <span class="icon">📉</span>预测质量分析
+    </button>
+
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section">监控清单</div>
+    <button class="sidebar-btn" onclick="openWatchlist()">
+      <span class="icon">👁</span>查看监控项
+    </button>
+    <button class="sidebar-btn" onclick="openAddWatch()">
+      <span class="icon">+</span>添加监控
+    </button>
+    <button class="sidebar-btn" onclick="checkAlerts()">
+      <span class="icon">🔔</span>检查预警
     </button>
   </div>
 
@@ -635,13 +709,80 @@
         <button class="mini-btn"        data-type="company"   onclick="switchType(event, 'company')">公司</button>
         <button class="mini-btn"        data-type="portfolio" onclick="switchType(event, 'portfolio')">持仓</button>
         <span style="flex:1"></span>
-        <button class="mini-btn"         id="btnResolve"  onclick="resolveNow()">立即结算</button>
+        <button class="mini-btn"         id="btnResolve"  onclick="resolveNow(false)">结算到期</button>
+        <button class="mini-btn"         id="btnForce"    onclick="resolveNow(true)">强制结算</button>
         <button class="mini-btn primary" id="btnReload"   onclick="loadPredictions()">刷新</button>
       </div>
 
       <div id="predTableWrap">
         <div class="empty">加载中…</div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 监控清单 Modal -->
+<div class="modal-mask" id="watchModal" onclick="if(event.target===this)closeWatchlist()">
+  <div class="modal">
+    <div class="modal-header">
+      <span style="font-size:18px">👁</span>
+      <div class="modal-title">监控清单</div>
+      <button class="mini-btn primary" style="margin-left:auto;margin-right:8px" onclick="closeWatchlist();openAddWatch()">+ 添加</button>
+      <button class="modal-close" onclick="closeWatchlist()">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="watchContent"><div class="empty">加载中…</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- 添加监控 Modal -->
+<div class="modal-mask" id="addWatchModal" onclick="if(event.target===this)closeAddWatch()">
+  <div class="modal" style="width:min(520px,92vw)">
+    <div class="modal-header">
+      <span style="font-size:18px">+</span>
+      <div class="modal-title">添加监控变量</div>
+      <button class="modal-close" onclick="closeAddWatch()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row"><label>变量名</label><input id="wfVar" placeholder="如：NVDA FY26Q2 Data Center 营收"></div>
+      <div class="form-row"><label>Ticker</label><input id="wfTicker" placeholder="如：NVDA（宏观变量留空）"></div>
+      <div class="form-row"><label>频率</label>
+        <select id="wfFreq">
+          <option value="daily">每日</option>
+          <option value="weekly" selected>每周</option>
+          <option value="monthly">每月</option>
+          <option value="quarterly">每季</option>
+        </select>
+      </div>
+      <div class="form-row"><label>看多信号</label><input id="wfBull" placeholder="如：>$35B"></div>
+      <div class="form-row"><label>看空信号</label><input id="wfBear" placeholder="如：<$28B"></div>
+      <div class="form-row"><label>优先级</label>
+        <select id="wfPri">
+          <option value="1">高</option>
+          <option value="2" selected>中</option>
+          <option value="3">低</option>
+        </select>
+      </div>
+      <div style="text-align:right;margin-top:14px">
+        <button class="mini-btn" onclick="closeAddWatch()">取消</button>
+        <button class="mini-btn primary" id="btnAddWatch" onclick="submitWatch()">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 预测质量分析 Modal -->
+<div class="modal-mask" id="analyticsModal" onclick="if(event.target===this)closeAnalytics()">
+  <div class="modal">
+    <div class="modal-header">
+      <span style="font-size:18px">📉</span>
+      <div class="modal-title">预测质量分析</div>
+      <button class="mini-btn primary" style="margin-left:auto;margin-right:8px" onclick="loadAnalytics()">刷新</button>
+      <button class="modal-close" onclick="closeAnalytics()">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="analyticsContent"><div class="empty">加载中…</div></div>
     </div>
   </div>
 </div>
@@ -956,24 +1097,273 @@
     wrap.innerHTML = `<div class="table-wrap"><table class="pred-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   }
 
-  async function resolveNow() {
-    const btn = document.getElementById('btnResolve');
+  async function resolveNow(force = false) {
+    if (force && !confirm('强制结算将用当前价格结算所有未到期预测（不可撤销），确认？')) return;
+    const btn = document.getElementById(force ? 'btnForce' : 'btnResolve');
     btn.disabled = true; btn.textContent = '结算中…';
     try {
-      const res = await fetch(`${API_BASE}/api/research/predictions/resolve`, { method: 'POST' });
+      const url = `${API_BASE}/api/research/predictions/resolve?force=${force}`;
+      const res = await fetch(url, { method: 'POST' });
       const data = await res.json();
-      alert(`结算完成：已结算 ${data.resolved} 条`);
+      const msg = data.message ? `\n${data.message}` : '';
+      alert(`结算完成：已结算 ${data.resolved} 条${data.hit_rate != null ? '，命中率 ' + (data.hit_rate*100).toFixed(1) + '%' : ''}${msg}`);
       loadPredictions();
     } catch (e) {
       alert('结算失败：' + e.message);
     } finally {
-      btn.disabled = false; btn.textContent = '立即结算';
+      btn.disabled = false; btn.textContent = force ? '强制结算' : '结算到期';
     }
   }
 
-  // ESC 关闭 Modal
+  // ── 监控清单 ──────────────────────────────────
+  function openWatchlist() {
+    document.getElementById('watchModal').classList.add('open');
+    loadWatchlist();
+  }
+  function closeWatchlist() {
+    document.getElementById('watchModal').classList.remove('open');
+  }
+
+  async function loadWatchlist() {
+    const wrap = document.getElementById('watchContent');
+    try {
+      const res = await fetch(`${API_BASE}/api/research/watchlist`);
+      const items = await res.json();
+      if (!items || items.length === 0) {
+        wrap.innerHTML = '<div class="empty">暂无监控项。运行一次持仓分析后会自动提取，或手动添加。</div>';
+        return;
+      }
+      wrap.innerHTML = '<div class="watch-list">' + items.map(renderWatchItem).join('') + '</div>';
+    } catch (e) {
+      wrap.innerHTML = `<div class="empty">加载失败：${e.message}</div>`;
+    }
+  }
+
+  function renderWatchItem(item) {
+    const ticker = item.ticker ? `<span class="watch-ticker">[${item.ticker}]</span>` : '<span class="watch-ticker">[宏观]</span>';
+    const bull = item.bullish_signal ? `<span class="bull">▲ ${escapeHtml(item.bullish_signal)}</span>` : '';
+    const bear = item.bearish_signal ? `<span class="bear">▼ ${escapeHtml(item.bearish_signal)}</span>` : '';
+    const val = item.current_value ? `<span style="margin-left:8px">最近值: <strong>${escapeHtml(item.current_value)}</strong></span>` : '';
+    const freq = {daily:'每日',weekly:'每周',monthly:'每月',quarterly:'每季'}[item.frequency] || item.frequency;
+    return `
+      <div class="watch-item">
+        <div class="watch-priority p${item.priority}"></div>
+        <div class="watch-info">
+          <div class="watch-var">${escapeHtml(item.variable)}${ticker}</div>
+          <div class="watch-signals">${bull}${bear}${val}</div>
+          <div class="watch-meta">${freq} · ${item.source} · ${item.created_at ? item.created_at.slice(0,10) : ''}</div>
+        </div>
+        <button class="watch-del" title="停用" onclick="deleteWatch(${item.id})">×</button>
+      </div>`;
+  }
+
+  async function deleteWatch(id) {
+    if (!confirm('确定停用此监控项？')) return;
+    try {
+      await fetch(`${API_BASE}/api/research/watchlist/${id}`, { method: 'DELETE' });
+      loadWatchlist();
+    } catch (e) {
+      alert('操作失败：' + e.message);
+    }
+  }
+
+  // ── 添加监控 ──────────────────────────────────
+  function openAddWatch() {
+    document.getElementById('addWatchModal').classList.add('open');
+    document.getElementById('wfVar').focus();
+  }
+  function closeAddWatch() {
+    document.getElementById('addWatchModal').classList.remove('open');
+  }
+
+  async function submitWatch() {
+    const variable = document.getElementById('wfVar').value.trim();
+    if (!variable) { alert('请填写变量名'); return; }
+
+    const body = {
+      variable,
+      ticker: document.getElementById('wfTicker').value.trim() || null,
+      frequency: document.getElementById('wfFreq').value,
+      bullish_signal: document.getElementById('wfBull').value.trim() || null,
+      bearish_signal: document.getElementById('wfBear').value.trim() || null,
+      priority: parseInt(document.getElementById('wfPri').value),
+    };
+
+    const btn = document.getElementById('btnAddWatch');
+    btn.disabled = true; btn.textContent = '添加中…';
+    try {
+      const res = await fetch(`${API_BASE}/api/research/watchlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      closeAddWatch();
+      // Clear form
+      ['wfVar','wfTicker','wfBull','wfBear'].forEach(id => document.getElementById(id).value = '');
+      openWatchlist();
+    } catch (e) {
+      alert('添加失败：' + e.message);
+    } finally {
+      btn.disabled = false; btn.textContent = '添加';
+    }
+  }
+
+  // ── 预测质量分析 ──────────────────────────────
+  function openAnalytics() {
+    document.getElementById('analyticsModal').classList.add('open');
+    loadAnalytics();
+  }
+  function closeAnalytics() {
+    document.getElementById('analyticsModal').classList.remove('open');
+  }
+
+  async function loadAnalytics() {
+    const wrap = document.getElementById('analyticsContent');
+    wrap.innerHTML = '<div class="empty">加载中…</div>';
+    try {
+      const res = await fetch(`${API_BASE}/api/research/predictions/analytics`);
+      const data = await res.json();
+      wrap.innerHTML = renderAnalytics(data);
+    } catch (e) {
+      wrap.innerHTML = `<div class="empty">加载失败：${e.message}</div>`;
+    }
+  }
+
+  function renderAnalytics(data) {
+    let html = '';
+
+    // Calibration
+    const cal = data.calibration || {};
+    html += '<div class="analytics-section">';
+    html += '<h4>🎯 Confidence 校准</h4>';
+    if (cal.total === 0) {
+      html += '<div class="analytics-interp">数据不足 — 预测结算后此处将显示模型置信度是否可信赖（Brier Score）</div>';
+    } else {
+      html += `<div class="stat-grid" style="margin-bottom:10px">
+        <div class="stat-card"><div class="stat-label">已结算预测</div><div class="stat-value">${cal.total}</div></div>
+        <div class="stat-card"><div class="stat-label">Brier Score</div><div class="stat-value${cal.brier_score < 0.2 ? ' good' : cal.brier_score > 0.3 ? ' bad' : ''}">${cal.brier_score?.toFixed(3) ?? '—'}</div></div>
+        <div class="stat-card"><div class="stat-label">平均校准误差</div><div class="stat-value${cal.avg_calibration_error < 0.1 ? ' good' : ' bad'}">${cal.avg_calibration_error?.toFixed(3) ?? '—'}</div></div>
+        <div class="stat-card"><div class="stat-label">结论</div><div class="stat-value muted" style="font-size:12px">${escapeHtml(cal.interpretation || '')}</div></div>
+      </div>`;
+      if (cal.buckets && cal.buckets.length > 0) {
+        html += '<div style="font-size:12px;color:var(--text-2);margin-bottom:6px">分桶详情（模型声称 vs 实际命中）：</div>';
+        cal.buckets.forEach(b => {
+          const predicted = (b.predicted_conf * 100).toFixed(0);
+          const actual = (b.actual_hit_rate * 100).toFixed(0);
+          html += `<div class="cal-bar">
+            <span style="min-width:80px">${b.bucket_range}</span>
+            <span style="min-width:40px">n=${b.count}</span>
+            <div class="cal-bar-track">
+              <div class="cal-bar-fill" style="width:${actual}%;background:var(--blue-act)"></div>
+            </div>
+            <span style="min-width:90px">声称${predicted}% 实际${actual}%</span>
+          </div>`;
+        });
+      }
+    }
+    html += '</div>';
+
+    // Walk-forward
+    const wf = data.walk_forward || {};
+    html += '<div class="analytics-section">';
+    html += '<h4>📊 Walk-Forward 稳定性</h4>';
+    if (!wf.windows || wf.windows.length === 0) {
+      html += '<div class="analytics-interp">数据不足 — 按月窗口统计命中率，检验策略是否时间一致</div>';
+    } else {
+      if (wf.stability) {
+        html += `<div class="analytics-interp">
+          平均命中率: <strong>${(wf.stability.mean_hit_rate * 100).toFixed(1)}%</strong> ±
+          ${(wf.stability.std_hit_rate * 100).toFixed(1)}% |
+          变异系数 CV=${wf.stability.cv?.toFixed(2)} |
+          <strong>${escapeHtml(wf.stability.interpretation || '')}</strong>
+        </div>`;
+      }
+      html += '<div class="table-wrap"><table class="pred-table"><thead><tr><th>时间段</th><th>预测数</th><th>命中率</th><th>平均收益</th><th>超额</th></tr></thead><tbody>';
+      wf.windows.forEach(w => {
+        const hrCls = w.hit_rate >= 0.55 ? 'num-pos' : w.hit_rate < 0.45 ? 'num-neg' : '';
+        html += `<tr>
+          <td>${escapeHtml(w.period)}</td>
+          <td>${w.count}</td>
+          <td class="${hrCls}">${(w.hit_rate * 100).toFixed(1)}%</td>
+          <td class="${w.avg_return >= 0 ? 'num-pos' : 'num-neg'}">${w.avg_return != null ? (w.avg_return * 100).toFixed(2) + '%' : '—'}</td>
+          <td class="${w.avg_excess >= 0 ? 'num-pos' : 'num-neg'}">${w.avg_excess != null ? (w.avg_excess * 100).toFixed(2) + '%' : '—'}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+
+    // IC Decay
+    const ic = data.ic_decay || {};
+    html += '<div class="analytics-section">';
+    html += '<h4>📉 IC Decay（信号衰减）</h4>';
+    if (!ic.decay_curve || ic.decay_curve.length === 0) {
+      html += '<div class="analytics-interp">数据不足 — 不同 horizon 的方向预测力衰减曲线</div>';
+    } else {
+      html += `<div class="analytics-interp">
+        峰值 IC=${ic.peak_ic?.toFixed(3)} @ ${ic.peak_ic_day}天 |
+        <strong>${escapeHtml(ic.interpretation || '')}</strong>
+      </div>`;
+      html += '<div class="table-wrap"><table class="pred-table"><thead><tr><th>Horizon(天)</th><th>样本数</th><th>IC</th><th>命中率</th></tr></thead><tbody>';
+      ic.decay_curve.forEach(d => {
+        const icCls = Math.abs(d.ic) > 0.1 ? 'num-pos' : '';
+        html += `<tr>
+          <td>${d.horizon_days}</td>
+          <td>${d.count}</td>
+          <td class="${icCls}">${d.ic.toFixed(3)}</td>
+          <td>${(d.hit_rate * 100).toFixed(1)}%</td>
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+
+    return html;
+  }
+
+  // ── 检查预警 ──────────────────────────────────
+  async function checkAlerts() {
+    const btn = document.querySelector('.sidebar-btn:last-child');
+    const origText = btn.innerHTML;
+    btn.innerHTML = '<span class="icon">🔔</span>检查中…';
+    btn.disabled = true;
+    try {
+      const res = await fetch(`${API_BASE}/api/research/watchlist/check-alerts?notify=true`, { method: 'POST' });
+      const data = await res.json();
+      if (data.triggered > 0) {
+        let msg = `检查完成：${data.checked} 项已检查，${data.triggered} 项触发预警`;
+        if (data.feishu_sent) msg += '\n已推送到飞书';
+        else msg += '\n（飞书未配置或推送失败）';
+        msg += '\n\n触发项：\n';
+        (data.alerts || []).forEach(a => {
+          const icon = a.signal_type === 'bullish' ? '📈' : '📉';
+          msg += `${icon} [${a.ticker || '宏观'}] ${a.variable}: 当前 ${Number(a.current_value).toFixed(4)} | 阈值 ${a.threshold}\n`;
+        });
+        alert(msg);
+      } else {
+        alert(`检查完成：${data.checked} 项已检查，无预警触发`);
+      }
+      // 刷新监控清单（更新 current_value）
+      if (document.getElementById('watchlistModal').classList.contains('open')) {
+        loadWatchlist();
+      }
+    } catch (e) {
+      alert('检查失败：' + e.message);
+    } finally {
+      btn.innerHTML = origText;
+      btn.disabled = false;
+    }
+  }
+
+  // ESC 关闭所有 Modal
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closePredictions();
+    if (e.key === 'Escape') {
+      closePredictions();
+      closeWatchlist();
+      closeAddWatch();
+      closeAnalytics();
+    }
   });
 </script>
 </body>

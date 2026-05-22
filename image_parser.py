@@ -4,10 +4,9 @@
 """
 import os
 import base64
-import json
-import re
 from typing import List, Optional
 from openai import OpenAI
+from json_utils import parse_json_array
 
 QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "sk-7f45108d8cd043c48306f860228d5479")
 QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -77,7 +76,7 @@ def parse_image_to_positions(image_bytes: bytes, mime_type: str = "image/jpeg") 
             max_tokens=2000,
         )
         raw_text = resp.choices[0].message.content or ""
-        positions = _extract_json_array(raw_text)
+        positions = parse_json_array(raw_text)
         return {
             "success": True,
             "positions": positions,
@@ -93,34 +92,3 @@ def parse_image_to_positions(image_bytes: bytes, mime_type: str = "image/jpeg") 
         }
 
 
-def _extract_json_array(text: str) -> List[dict]:
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    # 尝试直接解析
-    stripped = text.strip()
-    if stripped.startswith("["):
-        try:
-            return json.loads(stripped)
-        except Exception:
-            pass
-    # 提取 markdown 代码块
-    match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except Exception:
-            pass
-    # 大括号方括号匹配
-    start = text.find("[")
-    if start >= 0:
-        depth = 0
-        for i, ch in enumerate(text[start:], start):
-            if ch == "[":
-                depth += 1
-            elif ch == "]":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start: i + 1])
-                    except Exception:
-                        break
-    return []

@@ -11,9 +11,9 @@
 """
 import os
 import json
-import re
 from typing import List, Optional
 from openai import OpenAI
+from json_utils import parse_json_object
 
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 _CLOSEAI_BASE_URL = "https://api.openai-proxy.org/v1"
@@ -214,61 +214,12 @@ def generate_advice(positions: List[dict], signals: dict, model_override: Option
 
 
 def _parse_advice(text: str) -> dict:
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    stripped = text.strip()
-    try:
-        return json.loads(stripped)
-    except Exception:
-        pass
-    # markdown 代码块：提取 ``` 之间的全部内容再解析
-    code_block = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-    if code_block:
-        candidate = code_block.group(1).strip()
-        try:
-            return json.loads(candidate)
-        except Exception:
-            pass
-        result = _extract_json_by_braces(candidate)
-        if result is not None:
-            return result
-    # 从全文中用字符串感知的括号匹配提取 JSON
-    result = _extract_json_by_braces(text)
+    result = parse_json_object(text)
     if result is not None:
         return result
     return {
-        "summary": stripped[:200],
+        "summary": text.strip()[:200],
         "recommendations": [],
         "risk_notes": ["JSON 解析失败，请查看 raw_thinking"],
         "raw_thinking": None,
     }
-
-
-def _extract_json_by_braces(text: str) -> Optional[dict]:
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escape = False
-    for i, ch in enumerate(text[start:], start):
-        if escape:
-            escape = False
-            continue
-        if ch == "\\" and in_string:
-            escape = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start: i + 1])
-                except Exception:
-                    return None
-    return None
