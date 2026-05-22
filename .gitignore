@@ -1,1 +1,5 @@
 .env
+.env.example
+deploy.sh
+InvestmentResearchWithLLM/.env.example
+InvestmentResearchWithLLM/deploy.sh

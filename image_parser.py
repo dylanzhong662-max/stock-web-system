@@ -8,7 +8,7 @@ from typing import List, Optional
 from openai import OpenAI
 from json_utils import parse_json_array
 
-QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "sk-7f45108d8cd043c48306f860228d5479")
+QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "")
 QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 QWEN_MODEL = "qwen-vl-max"
 
