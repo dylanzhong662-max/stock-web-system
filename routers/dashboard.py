@@ -19,53 +19,22 @@ router = APIRouter()
 def get_summary(db: Session = Depends(get_db)):
     positions = db.query(Position).filter(Position.status == "open").all()
     alerts = []
-    total_pnl = 0.0
-    total_cost = 0.0
     needs_action = 0
+    total_cost = sum(pos.cost_basis_usd for pos in positions)
 
     for pos in positions:
-        current_price = price_fetcher.get_current_price(pos.asset)
-        if not current_price:
-            continue
-
-        if pos.direction == "long":
-            pnl = (current_price - pos.entry_price) * pos.quantity
-            at_stop = bool(pos.stop_loss and current_price <= pos.stop_loss)
-            at_target = bool(pos.profit_target and current_price >= pos.profit_target)
-        else:
-            pnl = (pos.entry_price - current_price) * pos.quantity
-            at_stop = bool(pos.stop_loss and current_price >= pos.stop_loss)
-            at_target = bool(pos.profit_target and current_price <= pos.profit_target)
-
-        total_pnl += pnl
-        total_cost += pos.cost_basis_usd
-
-        if at_stop:
-            needs_action += 1
-            alerts.append(Alert(
-                asset=pos.asset, status="STOP_TRIGGERED",
-                message=f"{pos.asset} 已触及止损位 {pos.stop_loss}",
-                severity="error",
-            ))
-        elif at_target:
-            needs_action += 1
-            alerts.append(Alert(
-                asset=pos.asset, status="TARGET_REACHED",
-                message=f"{pos.asset} 已达到目标价 {pos.profit_target}",
-                severity="success",
-            ))
-        else:
-            sig = signal_reader.extract_signal_summary(pos.asset)
-            if sig:
-                sig_action = sig.get("action")
-                if (pos.direction == "long" and sig_action == "short") or \
-                   (pos.direction == "short" and sig_action == "long"):
-                    needs_action += 1
-                    alerts.append(Alert(
-                        asset=pos.asset, status="SIGNAL_REVERSED",
-                        message=f"{pos.asset} LLM 信号方向已反转，建议平仓",
-                        severity="warning",
-                    ))
+        sig = signal_reader.extract_signal_summary(pos.ticker or pos.asset) or \
+              signal_reader.extract_signal_summary(pos.asset)
+        if sig:
+            sig_action = sig.get("action")
+            if (pos.direction == "long" and sig_action == "short") or \
+               (pos.direction == "short" and sig_action == "long"):
+                needs_action += 1
+                alerts.append(Alert(
+                    asset=pos.asset, status="SIGNAL_REVERSED",
+                    message=f"{pos.asset} LLM 信号方向已反转，建议平仓",
+                    severity="warning",
+                ))
 
     all_signals = signal_reader.read_all_signals()
     active_signals = sum(
@@ -73,13 +42,10 @@ def get_summary(db: Session = Depends(get_db)):
         if s and s.get("action") not in (None, "no_trade")
     )
 
-    portfolio_value = total_cost + total_pnl
-    pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
-
     return DashboardSummary(
-        portfolio_value=round(portfolio_value, 2),
-        total_unrealized_pnl_usd=round(total_pnl, 2),
-        total_unrealized_pnl_pct=round(pnl_pct, 2),
+        portfolio_value=round(total_cost, 2),
+        total_unrealized_pnl_usd=0.0,
+        total_unrealized_pnl_pct=0.0,
         active_signals=active_signals,
         open_positions=len(positions),
         needs_action=needs_action,

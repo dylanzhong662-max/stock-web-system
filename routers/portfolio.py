@@ -20,8 +20,6 @@ router = APIRouter()
 
 
 def _compute(pos: Position, current_price: Optional[float] = None) -> dict:
-    if current_price is None:
-        current_price = price_fetcher.get_current_price(pos.asset, pos.ticker or "")
     sig = signal_reader.extract_signal_summary(pos.ticker or pos.asset) or \
           signal_reader.extract_signal_summary(pos.asset)
 
@@ -38,7 +36,10 @@ def _compute(pos: Position, current_price: Optional[float] = None) -> dict:
             if pos.profit_target and position_status == "HOLD":
                 dist_target = (pos.profit_target - current_price) / pos.entry_price * 100
                 if current_price >= pos.profit_target:
-                    position_status = "TARGET_REACHED"
+                    position_status = "TARGET_1_REACHED"
+            target_2 = getattr(pos, "profit_target_2", None)
+            if target_2 and position_status == "HOLD" and current_price >= target_2:
+                position_status = "TARGET_2_REACHED"
         else:
             if pos.stop_loss:
                 dist_stop = (pos.stop_loss - current_price) / pos.entry_price * 100
@@ -47,7 +48,10 @@ def _compute(pos: Position, current_price: Optional[float] = None) -> dict:
             if pos.profit_target and position_status == "HOLD":
                 dist_target = (current_price - pos.profit_target) / pos.entry_price * 100
                 if current_price <= pos.profit_target:
-                    position_status = "TARGET_REACHED"
+                    position_status = "TARGET_1_REACHED"
+            target_2 = getattr(pos, "profit_target_2", None)
+            if target_2 and position_status == "HOLD" and current_price <= target_2:
+                position_status = "TARGET_2_REACHED"
 
     sig_action = sig_bias = None
     if sig:
@@ -79,10 +83,7 @@ def _to_response(pos: Position, current_price: Optional[float] = None) -> Positi
 @router.get("/positions", response_model=List[PositionResponse])
 def list_positions(db: Session = Depends(get_db)):
     positions = db.query(Position).filter(Position.status == "open").all()
-    # 用 (asset, ticker) 对批量拉价格，key 是 asset
-    pos_pairs = list({(p.asset, p.ticker or p.asset) for p in positions})
-    prices = price_fetcher.get_prices_batch(pos_pairs)
-    return [_to_response(p, current_price=prices.get(p.asset)) for p in positions]
+    return [_to_response(p, current_price=p.current_price) for p in positions]
 
 
 @router.get("/positions/tickers")
@@ -94,7 +95,7 @@ def list_tickers(db: Session = Depends(get_db)):
 
 @router.post("/positions/bulk-import")
 def bulk_import_positions(body: List[PositionCreate], db: Session = Depends(get_db)):
-    """批量导入持仓：同 ticker 已有开仓则跳过，否则新建。返回每条结果。"""
+    """批量导入持仓：同 ticker 已有开仓则更新 current_price，否则新建。返回每条结果。"""
     results = []
     for item in body:
         existing = db.query(Position).filter(
@@ -102,7 +103,12 @@ def bulk_import_positions(body: List[PositionCreate], db: Session = Depends(get_
             Position.status == "open"
         ).first()
         if existing:
-            results.append({"ticker": item.ticker, "asset": item.asset, "action": "skipped", "reason": "已有开仓"})
+            if item.current_price:
+                existing.current_price = item.current_price
+                existing.updated_at = datetime.now().isoformat()
+                results.append({"ticker": item.ticker, "asset": item.asset, "action": "price_updated"})
+            else:
+                results.append({"ticker": item.ticker, "asset": item.asset, "action": "skipped", "reason": "已有开仓"})
             continue
         pos = Position(**item.model_dump())
         pos.created_at = datetime.now().isoformat()
@@ -113,7 +119,8 @@ def bulk_import_positions(body: List[PositionCreate], db: Session = Depends(get_
     sync.sync_to_json(db)
     created = sum(1 for r in results if r["action"] == "created")
     skipped = sum(1 for r in results if r["action"] == "skipped")
-    return {"created": created, "skipped": skipped, "details": results}
+    price_updated = sum(1 for r in results if r["action"] == "price_updated")
+    return {"created": created, "skipped": skipped, "price_updated": price_updated, "details": results}
 
 
 @router.post("/positions", response_model=PositionResponse)

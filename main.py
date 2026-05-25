@@ -13,6 +13,20 @@ import models  # noqa: F401
 
 Base.metadata.create_all(bind=engine)
 
+# 存量数据库字段迁移
+import sqlite3 as _sqlite3
+def _migrate():
+    _db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "trading.db")
+    if not os.path.exists(_db_path):
+        return
+    c = _sqlite3.connect(_db_path)
+    cols = [r[1] for r in c.execute("PRAGMA table_info(positions)").fetchall()]
+    if "current_price" not in cols:
+        c.execute("ALTER TABLE positions ADD COLUMN current_price REAL")
+        c.commit()
+    c.close()
+_migrate()
+
 app = FastAPI(title="持仓管理与调仓建议 API", version="1.0.0")
 
 app.add_middleware(

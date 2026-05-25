@@ -81,6 +81,60 @@ async def get_signals(
         return []
 
 
+async def get_risk_overlay(days: int = 7) -> dict | None:
+    """获取 Polymarket 风险 overlay（regime + position_multiplier + advice）"""
+    if not RAG_API_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(
+                f"{RAG_API_URL}/api/v1/risk/polymarket",
+                headers={"X-API-Key": RAG_API_KEY},
+                params={"days": days},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        return None
+
+
+async def check_trade(asset: str, direction: str, asset_class: str = "equity") -> dict | None:
+    """P2 信号过滤：检查 Polymarket 宏观环境是否支持该交易"""
+    if not RAG_API_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(
+                f"{RAG_API_URL}/api/v1/risk/check",
+                headers={"X-API-Key": RAG_API_KEY},
+                json={"asset": asset, "direction": direction, "asset_class": asset_class},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        return None
+
+
+def fmt_risk_overlay(overlay: dict | None) -> str:
+    """把 risk overlay 格式化为 prompt 注入文本"""
+    if not overlay:
+        return ""
+    regime = overlay.get("regime", "neutral")
+    mult = overlay.get("position_multiplier", 1.0)
+    reasons = overlay.get("reasons", [])
+    advice = overlay.get("advice", {})
+
+    lines = [f"【Polymarket 宏观风险信号】"]
+    lines.append(f"  Regime: {regime.upper()} | 仓位系数: {mult}")
+    if reasons:
+        lines.append(f"  原因: {'; '.join(reasons)}")
+    if advice:
+        lines.append(f"  止损建议: {advice.get('stop_loss', '')}")
+        lines.append(f"  新开仓: {advice.get('new_positions', '')}")
+        lines.append(f"  现有仓位: {advice.get('existing_positions', '')}")
+    return "\n".join(lines)
+
+
 def fmt_news_context(results: list[dict], max_chars: int = 300) -> str:
     """把 RAG 结果格式化为 prompt 注入文本"""
     if not results:

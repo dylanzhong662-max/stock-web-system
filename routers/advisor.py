@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from sqlalchemy.orm import Session
 from typing import List
+from pydantic import BaseModel
 import asyncio
 
 from database import get_db
@@ -141,3 +142,24 @@ def get_advice_from_db(db: Session = Depends(get_db)):
         risk_notes=result.get("risk_notes", []),
         raw_thinking=result.get("raw_thinking"),
     )
+
+
+class PreTradeCheckRequest(BaseModel):
+    asset: str
+    direction: str = "buy"
+    asset_class: str = "equity"
+
+
+@router.post("/pre-trade-check")
+async def pre_trade_check(body: PreTradeCheckRequest):
+    """P2 下单前检查：调用 RAG 的 Polymarket 风险过滤器"""
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _llm_path = os.path.join(_root, "InvestmentResearchWithLLM")
+    if _llm_path not in sys.path:
+        sys.path.insert(0, _llm_path)
+    from rag_client import check_trade
+    result = await check_trade(body.asset, body.direction, body.asset_class)
+    if result is None:
+        return {"approved": True, "confidence": "unknown", "position_scale": 1.0,
+                "note": "RAG 风控服务不可用，按默认放行"}
+    return result

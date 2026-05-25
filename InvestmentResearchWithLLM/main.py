@@ -4,11 +4,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from database import engine, Base
+from database import engine, Base, migrate
 import models  # noqa: F401 — ensures all ORM models (including WatchItem) are registered
 from llm_client import AVAILABLE_MODELS, resolve_model
 
 Base.metadata.create_all(bind=engine)
+migrate()
 
 app = FastAPI(title="行业投研助手 API", version="0.1.0")
 

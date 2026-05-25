@@ -13,14 +13,22 @@ TTL = {
 }
 
 
-def get_cached(report_type: str, key: str) -> str | None:
+def _composite_key(key: str, model: str | None) -> str:
+    """同一主题 + 同一模型才命中缓存，不同模型重新生成"""
+    if model:
+        return f"{key}::{model}"
+    return key
+
+
+def get_cached(report_type: str, key: str, model: str | None = None) -> str | None:
+    composite = _composite_key(key, model)
     db = SessionLocal()
     try:
         row = (
             db.query(ReportCache)
             .filter(
                 ReportCache.report_type == report_type,
-                ReportCache.cache_key == key,
+                ReportCache.cache_key == composite,
                 ReportCache.expires_at > datetime.utcnow(),
             )
             .first()
@@ -30,13 +38,14 @@ def get_cached(report_type: str, key: str) -> str | None:
         db.close()
 
 
-def save_cache(report_type: str, key: str, content: str):
+def save_cache(report_type: str, key: str, content: str, model: str | None = None):
+    composite = _composite_key(key, model)
     hours = TTL.get(report_type, 6)
     db = SessionLocal()
     try:
         existing = (
             db.query(ReportCache)
-            .filter(ReportCache.report_type == report_type, ReportCache.cache_key == key)
+            .filter(ReportCache.report_type == report_type, ReportCache.cache_key == composite)
             .first()
         )
         if existing:
@@ -46,7 +55,7 @@ def save_cache(report_type: str, key: str, content: str):
         else:
             db.add(ReportCache(
                 report_type=report_type,
-                cache_key=key,
+                cache_key=composite,
                 content=content,
                 expires_at=datetime.utcnow() + timedelta(hours=hours),
             ))

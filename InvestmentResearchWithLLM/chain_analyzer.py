@@ -181,7 +181,7 @@ class ChainAnalyzer:
 
     async def analyze(self, industry: str, model: str | None = None) -> tuple[str, bool]:
         model = resolve_model(model)
-        cached = report_generator.get_cached("chain", industry)
+        cached = report_generator.get_cached("chain", industry, model)
         if cached:
             return cached, True
 
@@ -195,7 +195,7 @@ class ChainAnalyzer:
 
         source_note = f"Tavily × {len(all_results)} 条 + yfinance × {len(fin_data)} 只 + {model}"
         report = report_generator.format_report(content, source_note)
-        report_generator.save_cache("chain", industry, report)
+        report_generator.save_cache("chain", industry, report, model)
 
         entry_prices = {f["ticker"]: f.get("current_price") for f in fin_data
                         if f.get("ticker") and f.get("current_price")}
@@ -208,7 +208,7 @@ class ChainAnalyzer:
 
     async def stream(self, industry: str, model: str | None = None) -> AsyncGenerator[str, None]:
         model = resolve_model(model)
-        cached = report_generator.get_cached("chain", industry)
+        cached = report_generator.get_cached("chain", industry, model)
         if cached:
             yield cached
             return
@@ -224,7 +224,7 @@ class ChainAnalyzer:
         content = "".join(chunks)
         source_note = f"Tavily × {len(all_results)} 条 + yfinance × {len(fin_data)} 只 + {model}"
         report = report_generator.format_report(content, source_note)
-        report_generator.save_cache("chain", industry, report)
+        report_generator.save_cache("chain", industry, report, model)
 
         entry_prices = {f["ticker"]: f.get("current_price") for f in fin_data
                         if f.get("ticker") and f.get("current_price")}

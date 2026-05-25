@@ -17,3 +17,13 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def migrate():
+    """Drop old unique index on cache_key (now uses composite report_type+cache_key)."""
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("DROP INDEX IF EXISTS ix_reports_cache_key"))
+            conn.commit()
+        except Exception:
+            pass

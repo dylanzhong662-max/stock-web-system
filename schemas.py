@@ -10,8 +10,10 @@ class PositionCreate(BaseModel):
     entry_date: str
     quantity: float
     cost_basis_usd: float
+    current_price: Optional[float] = None
     stop_loss: Optional[float] = None
     profit_target: Optional[float] = None
+    profit_target_2: Optional[float] = None
     trailing_stop: bool = False
     source_signal: Optional[str] = None
     exchange: Optional[str] = None
@@ -20,8 +22,10 @@ class PositionCreate(BaseModel):
 
 
 class PositionUpdate(BaseModel):
+    current_price: Optional[float] = None
     stop_loss: Optional[float] = None
     profit_target: Optional[float] = None
+    profit_target_2: Optional[float] = None
     trailing_stop: Optional[bool] = None
     notes: Optional[str] = None
     quantity: Optional[float] = None
@@ -45,6 +49,7 @@ class PositionResponse(BaseModel):
     cost_basis_usd: float
     stop_loss: Optional[float]
     profit_target: Optional[float]
+    profit_target_2: Optional[float] = None
     trailing_stop: bool
     source_signal: Optional[str]
     exchange: Optional[str]

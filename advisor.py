@@ -11,6 +11,7 @@
 """
 import os
 import json
+import asyncio
 from typing import List, Optional
 from openai import OpenAI
 from json_utils import parse_json_object
@@ -147,11 +148,33 @@ SYSTEM_PROMPT = """你是一位对冲基金级别的资产组合管理顾问，�
 - 止损已触及 → 立即平仓，urgency=urgent"""
 
 
+def _fetch_risk_overlay() -> str:
+    """同步获取 Polymarket 风险 overlay（阻塞但有超时保护）"""
+    try:
+        import sys
+        _here = os.path.dirname(os.path.abspath(__file__))
+        if os.path.join(_here, "InvestmentResearchWithLLM") not in sys.path:
+            sys.path.insert(0, os.path.join(_here, "InvestmentResearchWithLLM"))
+        from rag_client import get_risk_overlay, fmt_risk_overlay
+
+        loop = asyncio.new_event_loop()
+        try:
+            overlay = loop.run_until_complete(get_risk_overlay(days=7))
+        finally:
+            loop.close()
+        return fmt_risk_overlay(overlay)
+    except Exception:
+        return ""
+
+
 def generate_advice(positions: List[dict], signals: dict, model_override: Optional[str] = None) -> dict:
     """
     positions: 持仓列表（来自截图解析或数据库）
     signals: 各资产信号摘要 {asset: signal_summary}
     """
+    # 获取 Polymarket 宏观风险环境
+    risk_context = _fetch_risk_overlay()
+
     # 分离新鲜信号和过期信号
     fresh_signals = {}
     stale_signals = {}
@@ -173,13 +196,17 @@ def generate_advice(positions: List[dict], signals: dict, model_override: Option
             "并在 reason 中注明'信号已过期，请核实后再操作'。\n"
         )
 
+    risk_section = ""
+    if risk_context:
+        risk_section = f"\n\n{risk_context}\n\n⚠️ 请根据上述 Polymarket 宏观风险信号调整建议：\n- 若 regime=defensive：所有建仓量 × 仓位系数，止损收紧 1 ATR，urgency 非 urgent 的新建仓改为 low\n- 若 regime=hawkish：growth 类建仓量 × 仓位系数，偏好 value 类资产\n- 仓位系数直接乘以 position_size_pct\n"
+
     signals_section = json.dumps({**fresh_signals, **stale_signals}, ensure_ascii=False, indent=2)
 
     user_content = f"""当前持仓：
 {json.dumps(positions, ensure_ascii=False, indent=2)}
 
 大模型金融分析系统最新信号：
-{signals_section}{stale_warning}
+{signals_section}{stale_warning}{risk_section}
 请给出调仓建议。"""
 
     model = _get_model(model_override)

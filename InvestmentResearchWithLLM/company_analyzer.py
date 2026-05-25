@@ -50,7 +50,7 @@ class CompanyAnalyzer:
 
     async def analyze(self, ticker: str, model: str | None = None) -> tuple[str, dict]:
         model = resolve_model(model)
-        cached = report_generator.get_cached("company", ticker.upper())
+        cached = report_generator.get_cached("company", ticker.upper(), model)
         if cached:
             return cached, {}
 
@@ -63,12 +63,12 @@ class CompanyAnalyzer:
         content = "".join(chunks)
 
         report = report_generator.format_report(content, f"FMP + yfinance + Tavily + {model}")
-        report_generator.save_cache("company", ticker.upper(), report)
+        report_generator.save_cache("company", ticker.upper(), report, model)
         return report, financial
 
     async def stream(self, ticker: str, model: str | None = None) -> AsyncGenerator[str, None]:
         model = resolve_model(model)
-        cached = report_generator.get_cached("company", ticker.upper())
+        cached = report_generator.get_cached("company", ticker.upper(), model)
         if cached:
             yield cached
             return
@@ -83,7 +83,7 @@ class CompanyAnalyzer:
 
         content = "".join(chunks)
         report = report_generator.format_report(content, f"FMP + yfinance + Tavily + {model}")
-        report_generator.save_cache("company", ticker.upper(), report)
+        report_generator.save_cache("company", ticker.upper(), report, model)
 
     async def _fetch_data(self, ticker: str) -> tuple[dict, list[dict]]:
         financial, rag_results, tavily_results = await asyncio.gather(

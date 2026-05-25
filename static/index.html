@@ -574,14 +574,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-act); box-s
       <div class="grid-4" id="kpi-row">
         <div class="card">
           <div class="card-icon icon-blue"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-.98 2.4-1.59 0-.83-.44-1.61-2.67-2.14-2.48-.6-4.18-1.62-4.18-3.67 0-1.72 1.39-2.84 3.11-3.21V4h2.67v1.95c1.86.45 2.79 1.86 2.85 3.39H14.3c-.05-1.11-.64-1.87-2.22-1.87-1.5 0-2.4.68-2.4 1.64 0 .84.65 1.39 2.67 1.91s4.18 1.39 4.18 3.91c-.01 1.83-1.38 2.83-3.12 3.16z"/></svg></div>
-          <div class="card-label">持仓市值</div>
+          <div class="card-label">持仓成本</div>
           <div class="card-value mono" id="kpi-value">—</div>
         </div>
         <div class="card">
           <div class="card-icon icon-green"><svg viewBox="0 0 24 24"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg></div>
-          <div class="card-label">浮动盈亏</div>
+          <div class="card-label">持仓数</div>
           <div class="card-value mono" id="kpi-pnl">—</div>
-          <div class="card-sub mono" id="kpi-pnl-pct">—</div>
+          <div class="card-sub mono" id="kpi-pnl-pct"></div>
         </div>
         <div class="card">
           <div class="card-icon icon-blue"><svg viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
@@ -635,8 +635,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-act); box-s
                 <th>方向</th>
                 <th>数量</th>
                 <th>成本价</th>
-                <th>现价</th>
-                <th>浮盈亏</th>
+                <th>止损</th>
+                <th>止盈</th>
                 <th>状态</th>
                 <th>信号</th>
                 <th>操作</th>
@@ -846,12 +846,9 @@ async function loadDashboard() {
     document.getElementById('kpi-value').textContent =
       '$' + (summary.portfolio_value || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
 
-    const pnl = summary.total_unrealized_pnl_usd || 0;
-    const pnlEl = document.getElementById('kpi-pnl');
-    pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
-    pnlEl.className = 'card-value mono ' + (pnl >= 0 ? 'positive' : 'negative');
-    const pct = summary.total_unrealized_pnl_pct || 0;
-    document.getElementById('kpi-pnl-pct').textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+    const posCount = summary.open_positions || 0;
+    document.getElementById('kpi-pnl').textContent = posCount;
+    document.getElementById('kpi-pnl-pct').textContent = '';
 
     document.getElementById('kpi-signals').textContent = summary.active_signals || 0;
 
@@ -918,12 +915,12 @@ async function loadPositions() {
       return;
     }
     tbody.innerHTML = data.map(p => {
-      const pnlCls = (p.unrealized_pnl_pct || 0) >= 0 ? 'positive' : 'negative';
-      const pnlSign = (p.unrealized_pnl_pct || 0) >= 0 ? '+' : '';
       const statusBadge = {
         HOLD:             '<span class="badge badge-gray">持有</span>',
         STOP_TRIGGERED:   '<span class="badge badge-red">止损触发</span>',
         TARGET_REACHED:   '<span class="badge badge-green">目标达到</span>',
+        TARGET_1_REACHED: '<span class="badge badge-green">T1减仓</span>',
+        TARGET_2_REACHED: '<span class="badge badge-green">T2清仓</span>',
         SIGNAL_REVERSED:  '<span class="badge badge-orange">信号反转</span>',
       }[p.position_status] || `<span class="badge badge-gray">${p.position_status||'—'}</span>`;
 
@@ -937,6 +934,11 @@ async function loadPositions() {
         ? '<span class="badge badge-green">多</span>'
         : '<span class="badge badge-red">空</span>';
 
+      const stopLoss = p.stop_loss ? '$'+p.stop_loss.toFixed(2) : '—';
+      const t1 = p.profit_target ? '$'+p.profit_target.toFixed(2) : '—';
+      const t2 = p.profit_target_2 ? '$'+p.profit_target_2.toFixed(2) : '';
+      const profitTarget = t2 ? `${t1}<br><span class="text-muted" style="font-size:11px">T2: ${t2}</span>` : t1;
+
       return `<tr>
         <td>
           <span style="font-weight:600">${p.asset}</span>
@@ -945,11 +947,8 @@ async function loadPositions() {
         <td>${dirBadge}</td>
         <td class="mono">${p.quantity}</td>
         <td class="mono">$${p.entry_price}</td>
-        <td class="mono">${p.current_price ? '$'+p.current_price.toFixed(2) : '—'}</td>
-        <td>
-          <span class="mono ${pnlCls}" style="font-weight:600">${p.unrealized_pnl_pct != null ? pnlSign+p.unrealized_pnl_pct.toFixed(2)+'%' : '—'}</span>
-          <br><span class="mono text-muted" style="font-size:11px">${p.unrealized_pnl_usd != null ? pnlSign+'$'+Math.abs(p.unrealized_pnl_usd).toFixed(2) : ''}</span>
-        </td>
+        <td class="mono" style="color:var(--red)">${stopLoss}</td>
+        <td class="mono" style="color:var(--green)">${profitTarget}</td>
         <td>${statusBadge}</td>
         <td>${sigBadge}${p.latest_signal_bias ? `<br><span class="text-muted" style="font-size:11px">${p.latest_signal_bias}</span>` : ''}</td>
         <td style="white-space:nowrap">

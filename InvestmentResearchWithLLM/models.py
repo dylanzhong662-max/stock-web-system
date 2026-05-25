@@ -9,10 +9,14 @@ class ReportCache(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     report_type = Column(String(20), nullable=False)   # chain | company | portfolio
-    cache_key = Column(String(200), nullable=False, unique=True)
+    cache_key = Column(String(300), nullable=False)    # topic::model 组合键
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("ix_report_type_key", "report_type", "cache_key", unique=True),
+    )
 
 
 class Prediction(Base):

@@ -74,14 +74,14 @@ class PortfolioResearch:
         report = report_generator.format_report(
             content, f"holderAndAction trading.db + FMP + Tavily + {model}"
         )
-        report_generator.save_cache("portfolio", "latest", report)
+        report_generator.save_cache("portfolio", "latest", report, model)
         await self._save_predictions(content, enriched)
         return report, enriched
 
     async def stream(self, model: str | None = None) -> AsyncGenerator[str, None]:
         model = resolve_model(model)
 
-        cached = report_generator.get_cached("portfolio", "latest")
+        cached = report_generator.get_cached("portfolio", "latest", model)
         if cached:
             yield cached
             return
@@ -117,7 +117,7 @@ class PortfolioResearch:
         report = report_generator.format_report(
             content, f"holderAndAction trading.db + FMP + Tavily + {model}"
         )
-        report_generator.save_cache("portfolio", "latest", report)
+        report_generator.save_cache("portfolio", "latest", report, model)
         await self._save_predictions(content, enriched)
 
     async def _save_predictions(self, content: str, enriched: list[dict]):

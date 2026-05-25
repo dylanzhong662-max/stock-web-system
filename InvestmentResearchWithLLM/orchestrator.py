@@ -77,7 +77,7 @@ class Orchestrator:
 
     async def _qa_stream(self, message: str, model: str) -> AsyncGenerator[str, None]:
         cache_key = hashlib.md5(message.encode()).hexdigest()
-        cached = report_generator.get_cached("qa", cache_key)
+        cached = report_generator.get_cached("qa", cache_key, model)
         if cached:
             yield cached
             return
@@ -106,4 +106,4 @@ class Orchestrator:
                 yield delta
 
         if chunks:
-            report_generator.save_cache("qa", cache_key, "".join(chunks))
+            report_generator.save_cache("qa", cache_key, "".join(chunks), model)
