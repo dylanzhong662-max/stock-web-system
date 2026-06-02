@@ -51,11 +51,6 @@ class PositionResponse(BaseModel):
     profit_target: Optional[float]
     profit_target_2: Optional[float] = None
     trailing_stop: bool
-    fundamental_stop: Optional[float] = None
-    fundamental_ceiling: Optional[float] = None
-    earnings_risk: Optional[bool] = False
-    earnings_date: Optional[str] = None
-    valuation_percentile: Optional[float] = None
     source_signal: Optional[str]
     exchange: Optional[str]
     symbol: Optional[str]

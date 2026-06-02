@@ -145,25 +145,7 @@ SYSTEM_PROMPT = """你是一位对冲基金级别的资产组合管理顾问，�
 - 若无法获得总资金，用单个资产 cost_basis 估算
 - new_opportunities：遍历所有信号，找出 action=long 且 bias≥0.55 但用户尚无持仓的资产
 - action=short 但持仓为 long → 平仓，urgency=urgent
-- 止损已触及 → 立即平仓，urgency=urgent
-
-━━━ 基本面止盈止损规则 ━━━
-exit_plan 中必须包含基本面维度的判断：
-- fundamental_stop_note: 基本面失效条件（营收连续下滑、核心业务流失、管理层变动等）
-- valuation_ceiling_note: 估值天花板说明（P/E分位>90%时必须注明）
-- earnings_risk_note: 若5天内有财报，必须提示"财报前建议减仓50%或收紧止损"
-- invalidation_condition: 什么基本面变化会让持仓逻辑失效（非价格维度）
-
-基本面止损触发条件（不看价格，只看事实）：
-1. 营收连续2季度负增长 → urgency=urgent, 建议清仓
-2. 毛利率单季度下降>5个百分点 → urgency=normal, 建议减半仓
-3. 核心产品/客户流失 → urgency=urgent
-4. 管理层重大变动（CEO/CFO离职）→ urgency=normal, 重新评估
-
-基本面止盈天花板：
-- 当前P/E > 历史5年P90分位 → 分批止盈，不追高
-- 共识预期已Price-in（如AI概念stock全线>50x PE）→ 用DCF Fair Value作天花板
-- 行业周期顶部信号（产能过剩、库存堆积）→ 降低目标价"""
+- 止损已触及 → 立即平仓，urgency=urgent"""
 
 
 def _fetch_risk_overlay() -> str:
