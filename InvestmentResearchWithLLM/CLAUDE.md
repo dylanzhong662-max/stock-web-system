@@ -101,6 +101,12 @@ GET  /api/research/watchlist                查看当前活跃监控项
 POST /api/research/watchlist                手动添加监控项
 DELETE /api/research/watchlist/{id}          停用监控项
 PUT  /api/research/watchlist/{id}/value     更新观测值
+
+# 策略验证（2026-05 新增）
+POST /api/research/backtest                 Walk-forward 回测，body: {"industry": "AI算力", "n_months": 6}
+POST /api/research/sensitivity              参数敏感性分析，body: {"industry": "半导体"}
+POST /api/research/consistency              一致性测试（N次同数据），body: {"industry": "AI算力", "n_runs": 3}
+GET  /api/research/weights                  因子权重优化状态（IC-weighted vs 学术先验）
 ```
 
 ---
@@ -162,6 +168,21 @@ curl -X DELETE http://localhost:8002/api/research/watchlist/3
 | finance-analysis | 8000 | LLM 信号生成 | 无 |
 | holderAndAction | 8001 | 持仓管理 | 只读 `/opt/holder-action/data/trading.db` |
 | InvestmentResearchWithLLM | 8002 | 行业投研 | — |
+
+---
+
+## 策略验证研究结论（2026-05-29）
+
+详见 `RESEARCH_FINDINGS.md`。核心发现：
+
+- **方向命中率 33.6%（劣于随机）**，Direction IC = -0.011，当前预测无 alpha
+- **Confidence 完全反转**：conf > 0.7 实际命中 9%，conf 0.5-0.6 命中 55%
+- **参数敏感性：全部稳健**（8/8 参数 CV < 0.1），筛选逻辑没问题
+- **一致性测试**：AI算力 3 次运行仅 NVDA 方向一致，其余为噪声
+- **因子权重**：已切换到数据驱动（growth:48% > neglect:27% > valuation:25%）
+- **IC Decay**：60 天 horizon 有强负 IC(-0.72)，需更多样本确认
+
+**当前策略定位**：Neglect Screener = 有效的 idea generation 工具，LLM 方向判断 = 不可直接执行的信号
 
 ---
 

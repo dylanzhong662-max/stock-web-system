@@ -9,6 +9,10 @@ import predictions as predictions_mod
 import prediction_analytics
 import watchlist as watchlist_mod
 import watchlist_alerter
+import backtest_simulation
+import parameter_sensitivity
+import consistency_test
+import neglect_weight_optimizer
 
 router = APIRouter()
 _chain = ChainAnalyzer()
@@ -194,3 +198,115 @@ async def check_watchlist_alerts(
     if notify:
         return await watchlist_alerter.run_check_and_notify()
     return await watchlist_alerter.check_alerts()
+
+
+# ---------------------------------------------------------------------------
+# Backtest Simulation
+# ---------------------------------------------------------------------------
+
+class BacktestRequest(BaseModel):
+    industry: str
+    n_months: int = 12
+    horizon_days: int = 90
+    transaction_cost_bps: int = 50
+    top_n: int = 10
+
+
+@router.post("/backtest")
+async def run_backtest(req: BacktestRequest):
+    """Walk-forward backtest：每月筛选 → 持有 horizon_days → 结算超额收益。
+
+    包含交易成本，输出 t-stat 检验是否统计显著。
+    """
+    return await backtest_simulation.run_walk_forward_backtest(
+        industry=req.industry,
+        n_months=req.n_months,
+        horizon_days=req.horizon_days,
+        transaction_cost_bps=req.transaction_cost_bps,
+        top_n=req.top_n,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Parameter Sensitivity Analysis
+# ---------------------------------------------------------------------------
+
+class SensitivityRequest(BaseModel):
+    industry: str
+
+
+@router.post("/sensitivity")
+async def run_sensitivity(req: SensitivityRequest):
+    """参数敏感性分析：测试 Neglect Score 各阈值 ±30% 时结果变化。
+
+    CV < 0.3 = 稳健，> 0.5 = 极度敏感（信号不可靠）。
+    """
+    import data_fetcher
+
+    # Screen with current params to get raw stock pool
+    try:
+        candidates = await data_fetcher.screen_neglected_growth(
+            industry=req.industry,
+            search_fn=data_fetcher.search,
+            max_candidates=50,
+        )
+    except Exception as e:
+        return {"error": f"Screening failed: {e}"}
+
+    # Get raw stock pool (before filtering) by lowering thresholds
+    from data_providers.intl_screener import _yf_fundamentals
+    from industry_seed_lists import get_seed_list
+
+    us_seeds, intl_seeds = get_seed_list(req.industry)
+    intl_stocks = await _yf_fundamentals(intl_seeds[:25]) if intl_seeds else []
+
+    # Combine screened candidates + raw intl stocks as pool
+    stock_pool = candidates + intl_stocks
+
+    if not stock_pool:
+        return {"error": "No stock pool data available for this industry"}
+
+    return parameter_sensitivity.run_sensitivity(stock_pool)
+
+
+# ---------------------------------------------------------------------------
+# Consistency Test
+# ---------------------------------------------------------------------------
+
+class ConsistencyRequest(BaseModel):
+    industry: str
+    n_runs: int = 3
+    model: Optional[str] = None
+
+
+@router.post("/consistency")
+async def run_consistency_test(req: ConsistencyRequest):
+    """一致性测试：同一产业链跑 N 次分析，比较预测方向一致性。
+
+    consistency_score > 80 = 信号可复现，< 40 = 纯噪声。
+    耗时约 N × 30-60 秒（每次都是完整的 R1 调用）。
+    """
+    return await consistency_test.run_consistency_test(
+        industry=req.industry,
+        n_runs=req.n_runs,
+        model=req.model,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Neglect Score Weight Optimization
+# ---------------------------------------------------------------------------
+
+@router.get("/weights")
+async def get_optimal_weights(
+    report_type: str = Query("chain", description="chain | company"),
+    since_days: int = Query(365, ge=30, le=3650),
+):
+    """查看当前 Neglect Score 因子权重（IC-weighted 或学术先验）。
+
+    积累 30+ resolved predictions 后自动切换到数据驱动权重。
+    """
+    return neglect_weight_optimizer.get_optimal_weights(
+        report_type=report_type,
+        since_days=since_days,
+    )

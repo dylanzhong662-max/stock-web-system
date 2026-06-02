@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import AsyncGenerator
 
 import data_fetcher
+from data_providers.intl_screener import screen_neglected_growth, format_neglect_candidates
 import rag_client
 import report_generator
 import predictions
@@ -95,6 +96,7 @@ class ChainAnalyzer:
         industry: str,
         search_results: list[dict],
         financial_data: list[dict],
+        neglect_candidates: list[dict] | None = None,
     ) -> str:
         with open(_PROMPT_FILE, encoding="utf-8") as f:
             template = f.read()
@@ -127,15 +129,18 @@ class ChainAnalyzer:
             else "（本次未匹配到代表性上市公司财务数据，财务数字以搜索结果为准）"
         )
 
+        neglect_text = format_neglect_candidates(neglect_candidates or [])
+
         return (
             template
             .replace("{industry}", industry)
             .replace("{search_results}", news_text)
             .replace("{financial_data}", fin_text)
+            .replace("{neglect_candidates}", neglect_text)
         )
 
-    async def _fetch_all_data(self, industry: str) -> tuple[list[dict], list[dict]]:
-        """P0: dual Tavily + RAG; P2: yfinance for extracted tickers."""
+    async def _fetch_all_data(self, industry: str) -> tuple[list[dict], list[dict], list[dict]]:
+        """P0: dual Tavily + RAG; P2: yfinance for extracted tickers; P3: intl neglect screen."""
         results_cn, results_en, rag_results = await asyncio.gather(
             data_fetcher.search(
                 f"{industry} 产业链 行业分析 投资 2025 利润率 关键变量",
@@ -177,7 +182,17 @@ class ChainAnalyzer:
                 if isinstance(r, dict) and r.get("market_cap"):
                     fin_data.append(r)
 
-        return all_results, fin_data
+        # P3: international neglect-alpha screening (runs in parallel with nothing blocking)
+        try:
+            neglect_candidates = await screen_neglected_growth(
+                industry=industry,
+                search_fn=data_fetcher.search,
+                max_candidates=10,
+            )
+        except Exception:
+            neglect_candidates = []
+
+        return all_results, fin_data, neglect_candidates
 
     async def analyze(self, industry: str, model: str | None = None) -> tuple[str, bool]:
         model = resolve_model(model)
@@ -185,24 +200,31 @@ class ChainAnalyzer:
         if cached:
             return cached, True
 
-        all_results, fin_data = await self._fetch_all_data(industry)
-        prompt = self._load_prompt(industry, all_results, fin_data)
+        all_results, fin_data, neglect_candidates = await self._fetch_all_data(industry)
+        prompt = self._load_prompt(industry, all_results, fin_data, neglect_candidates)
 
         chunks: list[str] = []
         async for chunk in self._stream(prompt, model):
             chunks.append(chunk)
         content = "".join(chunks)
 
-        source_note = f"Tavily × {len(all_results)} 条 + yfinance × {len(fin_data)} 只 + {model}"
+        n_neglect = len(neglect_candidates)
+        source_note = (
+            f"Tavily × {len(all_results)} 条 + yfinance × {len(fin_data)} 只"
+            f" + 国际筛选 × {n_neglect} 只 + {model}"
+        )
         report = report_generator.format_report(content, source_note)
         report_generator.save_cache("chain", industry, report, model)
 
         entry_prices = {f["ticker"]: f.get("current_price") for f in fin_data
                         if f.get("ticker") and f.get("current_price")}
+        for nc in neglect_candidates:
+            if nc.get("ticker") and nc.get("current_price"):
+                entry_prices[nc["ticker"]] = nc["current_price"]
         try:
             await predictions.extract_via_llm(content, "chain", industry, entry_prices)
         except Exception:
-            pass  # 预测落库失败不阻塞主流程
+            pass
 
         return report, False
 
@@ -213,8 +235,8 @@ class ChainAnalyzer:
             yield cached
             return
 
-        all_results, fin_data = await self._fetch_all_data(industry)
-        prompt = self._load_prompt(industry, all_results, fin_data)
+        all_results, fin_data, neglect_candidates = await self._fetch_all_data(industry)
+        prompt = self._load_prompt(industry, all_results, fin_data, neglect_candidates)
 
         chunks: list[str] = []
         async for chunk in self._stream(prompt, model):
@@ -222,12 +244,19 @@ class ChainAnalyzer:
             yield chunk
 
         content = "".join(chunks)
-        source_note = f"Tavily × {len(all_results)} 条 + yfinance × {len(fin_data)} 只 + {model}"
+        n_neglect = len(neglect_candidates)
+        source_note = (
+            f"Tavily × {len(all_results)} 条 + yfinance × {len(fin_data)} 只"
+            f" + 国际筛选 × {n_neglect} 只 + {model}"
+        )
         report = report_generator.format_report(content, source_note)
         report_generator.save_cache("chain", industry, report, model)
 
         entry_prices = {f["ticker"]: f.get("current_price") for f in fin_data
                         if f.get("ticker") and f.get("current_price")}
+        for nc in neglect_candidates:
+            if nc.get("ticker") and nc.get("current_price"):
+                entry_prices[nc["ticker"]] = nc["current_price"]
         try:
             predictions.save_from_report("chain", industry, content, entry_prices)
         except Exception:
@@ -237,7 +266,7 @@ class ChainAnalyzer:
         kwargs: dict = dict(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=16000,
+            max_tokens=20000,
             temperature=0.3,
             stream=True,
         )
