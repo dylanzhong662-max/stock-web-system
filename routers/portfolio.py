@@ -62,6 +62,9 @@ def _compute(pos: Position, current_price: Optional[float] = None) -> dict:
                (pos.direction == "short" and sig_action == "long"):
                 position_status = "SIGNAL_REVERSED"
 
+    if position_status == "HOLD" and getattr(pos, "earnings_risk", False):
+        position_status = "EARNINGS_RISK"
+
     return {
         "current_price": current_price,
         "unrealized_pnl_usd": round(pnl_usd, 2) if pnl_usd is not None else None,
