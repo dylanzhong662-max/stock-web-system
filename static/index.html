@@ -538,6 +538,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-act); box-s
       交易历史
     </button>
 
+    <button class="nav-item" id="nav-rag" onclick="showPage('rag',this)">
+      <svg viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      事件搜索
+    </button>
+
     <div class="nav-section-label" style="margin-top:12px">工具</div>
     <a class="nav-item" href="/stops">
       <svg viewBox="0 0 24 24"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
@@ -708,6 +713,39 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-act); box-s
       </div>
     </div>
 
+    <!-- ═══ 事件搜索 ═══ -->
+    <div id="page-rag" class="page">
+      <div class="sec-hd">
+        <span class="sec-title">RAG 事件搜索</span>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div class="form-group" style="flex:1;min-width:200px;margin-bottom:0">
+            <label>搜索关键词</label>
+            <input id="rag-query" placeholder="如：NVDA 财报、美联储加息、TSLA 交付量" onkeydown="if(event.key==='Enter')searchRAG()">
+          </div>
+          <div class="form-group" style="width:120px;margin-bottom:0">
+            <label>Ticker（可选）</label>
+            <input id="rag-ticker" placeholder="如 NVDA">
+          </div>
+          <div class="form-group" style="width:120px;margin-bottom:0">
+            <label>时间范围</label>
+            <select id="rag-hours">
+              <option value="24">24 小时</option>
+              <option value="72">3 天</option>
+              <option value="168" selected>7 天</option>
+              <option value="336">14 天</option>
+              <option value="720">30 天</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick="searchRAG()" id="rag-search-btn" style="height:34px">搜索</button>
+        </div>
+      </div>
+      <div id="rag-results">
+        <div class="empty">输入关键词搜索标的相关重要事件</div>
+      </div>
+    </div>
+
   </div><!-- /content -->
 </div><!-- /main -->
 
@@ -802,7 +840,7 @@ function closeSidebar() {
 }
 
 // ── Page routing ──────────────────────────────────────────────────────────────
-const PAGE_TITLES = { dashboard:'总览', positions:'持仓', signals:'信号', advice:'调仓建议', trades:'交易历史' };
+const PAGE_TITLES = { dashboard:'总览', positions:'持仓', signals:'信号', advice:'调仓建议', trades:'交易历史', rag:'事件搜索' };
 function showPage(name, el) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(a => a.classList.remove('active'));
@@ -1365,6 +1403,65 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
 document.querySelectorAll('.modal-overlay').forEach(o => {
   o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
 });
+
+// ── RAG Search ───────────────────────────────────────────────────────────────
+async function searchRAG() {
+  const query = document.getElementById('rag-query').value.trim();
+  if (!query) { toast('请输入搜索关键词', 'error'); return; }
+  const ticker = document.getElementById('rag-ticker').value.trim();
+  const hours = document.getElementById('rag-hours').value;
+  const btn = document.getElementById('rag-search-btn');
+  const container = document.getElementById('rag-results');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>搜索中';
+  container.innerHTML = '<div class="empty"><span class="spinner"></span>正在检索...</div>';
+
+  try {
+    const params = new URLSearchParams({ query, top_k: '15', hours });
+    if (ticker) params.set('ticker', ticker);
+    const data = await fetch(`/api/rag/search?${params}`).then(r => r.json());
+    const results = data.results || [];
+
+    if (!results.length) {
+      container.innerHTML = '<div class="empty">未找到相关事件</div>';
+    } else {
+      container.innerHTML = results.map(r => {
+        const date = (r.published_at || r.created_at || '').slice(0, 16).replace('T', ' ');
+        const source = r.source_name || r.source || '';
+        const sentiment = r.sentiment || '';
+        const importance = r.importance_score;
+        const text = r.chunk_text || r.summary_cn || r.title || '';
+        const tickers = (r.tickers || []).join(', ');
+
+        const sentBadge = sentiment === 'positive' ? '<span class="badge badge-green">利多</span>'
+                        : sentiment === 'negative' ? '<span class="badge badge-red">利空</span>'
+                        : sentiment === 'neutral'  ? '<span class="badge badge-gray">中性</span>'
+                        : '';
+        const impBadge = importance != null
+          ? `<span class="badge ${importance >= 0.7 ? 'badge-orange' : importance >= 0.4 ? 'badge-blue' : 'badge-gray'}">重要性 ${importance.toFixed(1)}</span>`
+          : '';
+
+        return `<div class="card" style="margin-bottom:10px;border-left:3px solid ${sentiment==='positive'?'var(--green)':sentiment==='negative'?'var(--red)':'var(--border)'}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:12px;color:var(--text-3)">${date}</span>
+              ${source ? `<span style="font-size:11px;background:var(--bg);padding:2px 6px;border-radius:4px;color:var(--text-2)">${esc(source)}</span>` : ''}
+              ${tickers ? `<span class="mono" style="font-size:11px;color:var(--blue-act)">${esc(tickers)}</span>` : ''}
+            </div>
+            <div style="display:flex;gap:4px">${sentBadge}${impBadge}</div>
+          </div>
+          <div style="font-size:13px;line-height:1.8;color:var(--text-2);white-space:pre-wrap">${esc(text)}</div>
+        </div>`;
+      }).join('');
+    }
+  } catch(e) {
+    container.innerHTML = `<div class="empty">搜索失败：${e.message}</div>`;
+    toast('搜索失败', 'error');
+  }
+  btn.disabled = false;
+  btn.textContent = '搜索';
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadDashboard();

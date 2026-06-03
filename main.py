@@ -38,7 +38,7 @@ app.add_middleware(
 )
 
 from routers import portfolio, trades, signals, scan, dashboard
-from routers import advisor, stops
+from routers import advisor, stops, rag
 
 app.include_router(portfolio.router, prefix="/api/portfolio",  tags=["portfolio"])
 app.include_router(trades.router,    prefix="/api/trades",     tags=["trades"])
@@ -47,6 +47,7 @@ app.include_router(scan.router,      prefix="/api/scan",       tags=["scan"])
 app.include_router(dashboard.router, prefix="/api/dashboard",  tags=["dashboard"])
 app.include_router(advisor.router,   prefix="/api/advisor",    tags=["advisor"])
 app.include_router(stops.router,     prefix="/api/stops",      tags=["stops"])
+app.include_router(rag.router,       prefix="/api/rag",        tags=["rag"])
 
 # 手机上传页面
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
