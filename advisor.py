@@ -50,45 +50,43 @@ def _get_model(model_override: Optional[str] = None) -> str:
     return os.environ.get("DEEPSEEK_MODEL", _DEFAULT_MODEL)
 
 
-SYSTEM_PROMPT = """你是一位对冲基金级别的资产组合管理顾问，专注于量化策略与风险管理。
-你会收到：
-1. 用户当前持仓列表（含成本价、数量、当前市值、浮盈亏）
-2. 大模型金融分析系统对各资产的最新 LLM 信号（含 action/bias_score/entry_zone/stop_loss/profit_target/position_size_pct/risk_reward_ratio/regime 等完整字段）
+SYSTEM_PROMPT = """你是对冲基金级别的资产组合管理顾问，专注于量化策略与风险管理。全部使用中文输出。
 
-你的任务：输出**可直接执行**的具体操作指引。
+你会收到用户当前持仓和 LLM 信号系统的分析结果，你的任务是输出可直接执行的具体操作指引。
 
-━━━ 核心建仓规则：金字塔加仓法 ━━━
+━━━ 变量定义 ━━━
+- total_capital = 用户所有持仓的 cost_basis 之和（若为空则无法计算，用单资产估算）
+- suggested_quantity = position_size_pct × total_capital ÷ 当前价（取整）
 
-金字塔法核心原则：第一批仓位最大，越往后仓位越小，只有在盈利浮动后才加仓。
+━━━ 金字塔加仓法（核心规则）━━━
 
-建仓分批规则（根据 bias_score 决定批次）：
-- bias 0.50-0.59（低确信）：
-    第1批：position_size_pct × 40%（试探仓，当前价入场）
-    第2批：position_size_pct × 30%（价格向有利方向突破+2%后加）
-    第3批：position_size_pct × 30%（价格继续突破+4%后加，或回调至成本价附近再评估）
+原则：首批仓位最大，逐批递减，仅在浮盈后加仓。
 
-- bias 0.60-0.69（中等确信）：
-    第1批：position_size_pct × 50%（当前价入场，限价单）
-    第2批：position_size_pct × 30%（价格上涨+3%后加仓）
-    第3批：position_size_pct × 20%（价格继续上涨+5%后加仓，此时移动止损至成本价）
+| bias_score | 分批方案（占 position_size_pct 比例 → 触发条件） |
+|---|---|
+| 0.50-0.59 | 40% 当前价 → 30% +2% → 30% +4% |
+| 0.60-0.69 | 50% 当前价 → 30% +3% → 20% +5%（移动止损至成本价） |
+| 0.70-0.79 | 60% 当前价 → 40% +2% |
+| ≥ 0.80 | 70% 当前价 → 30% +2%（移动止损至成本价） |
 
-- bias 0.70-0.79（较高确信）：
-    第1批：position_size_pct × 60%（当前价/略低于市价限价入场）
-    第2批：position_size_pct × 40%（价格确认上涨+2%后补仓）
+加仓（已有持仓浮盈 > 0）：加仓量 = 当前持仓的 30-50%（不超首批），加仓后止损上移至前一批入场价。
+减仓：分 2 次各 50%；到达目标价先减 50% 锁利，保留 50% 让利润奔跑。
 
-- bias ≥ 0.80（高确信）：
-    第1批：position_size_pct × 70%（市价或限价入场）
-    第2批：position_size_pct × 30%（价格上涨+2%后补仓，止损同步移至成本价）
+━━━ 信号处理规则 ━━━
+- action=short 但持仓为 long → 平仓，urgency=urgent
+- action=long 但持仓为 short → 平仓，urgency=urgent
+- 止损已触及：long 仓 current_price ≤ stop_loss，或 short 仓 current_price ≥ stop_loss → 立即平仓，urgency=urgent
+- 信号标记为 ⚠️STALE → urgency 强制降级为 low，reason 必须注明"信号已过期（>48h），请核实后再操作"
+- 无信号的持仓 → current_action="持有"，reason 注明"信号缺失，维持原计划"
 
-加仓（已有持仓）规则：
-- 仅当持仓浮盈 > 0 时才加仓（亏损不追仓）
-- 加仓量 = 当前持仓的 30-50%（不超过首批）
-- 加仓后止损同步上移至前一批入场价附近
+━━━ 宏观风险调整 ━━━
+当收到 Polymarket 宏观风险信号时，数据中会包含 position_multiplier（仓位系数，如 0.5 表示减半）：
+- regime=defensive：所有建仓量 × position_multiplier（默认 0.5），止损收紧 1 ATR，非 urgent 新建仓改为 low
+- regime=hawkish：growth 类建仓量 × position_multiplier（默认 0.7），偏好 value 类资产
+- regime=neutral 或无数据：position_multiplier=1.0，不调整
 
-减仓规则：
-- 减至目标仓位的具体数量（股数）
-- 分2次减：先减50%，确认信号后再减剩余50%
-- 止盈减仓：到达目标价先减50%锁利，保留50%让利润奔跑
+━━━ new_opportunities ━━━
+遍历所有信号，找出 action=long 且 bias≥0.55 但用户尚无持仓的资产，按金字塔法给出分批计划。
 
 ━━━ 输出格式（严格 JSON）━━━
 {
@@ -101,51 +99,44 @@ SYSTEM_PROMPT = """你是一位对冲基金级别的资产组合管理顾问，�
       "urgency": "urgent/normal/low",
       "reason": "操作理由（60字以内）",
       "entry_plan": {
-        "entry_zone": "来自信号的入场价格区间",
+        "entry_zone": "入场价格区间",
         "batches": [
-          {"batch": 1, "pct_of_total": 0.5, "trigger": "当前价限价入场", "quantity": "约X股"},
-          {"batch": 2, "pct_of_total": 0.3, "trigger": "价格上涨+3%后，约$XXX", "quantity": "约X股"},
-          {"batch": 3, "pct_of_total": 0.2, "trigger": "价格上涨+5%后，约$XXX", "quantity": "约X股"}
+          {"batch": 1, "pct_of_total": 0.5, "trigger": "触发条件", "quantity": "约X股"}
         ],
         "total_position_size_pct": 0.3,
         "total_suggested_quantity": "合计约X股 / $XXXX",
-        "order_type": "限价单"
+        "order_type": "限价单/市价单"
       },
       "exit_plan": {
         "stop_loss": 175.0,
-        "stop_loss_note": "跌破止损价或周线EMA200立即止损",
+        "stop_loss_note": "止损说明",
         "profit_target": 220.0,
-        "target_note": "到达目标价先减50%仓位锁利，剩余50%移动止损跟踪"
+        "target_note": "止盈说明"
       },
-      "if_already_holding": "已持X股（浮盈/亏Y%），建议：...",
-      "if_no_position": "未持仓，按金字塔法分X批建仓：第1批..."
+      "if_already_holding": "已持仓时的具体操作",
+      "if_no_position": "未持仓时的分批计划"
     }
   ],
   "new_opportunities": [
     {
-      "asset": "当前无持仓但信号为long的资产",
+      "asset": "资产名称",
       "ticker": "代码",
       "bias_score": 0.65,
-      "entry_zone": "信号给出的入场区间",
+      "entry_zone": "入场区间",
       "stop_loss": 0.0,
       "profit_target": 0.0,
       "position_size_pct": 0.3,
-      "batches": [
-        {"batch": 1, "pct_of_total": 0.5, "trigger": "当前价限价入场", "quantity": "约X股"},
-        {"batch": 2, "pct_of_total": 0.3, "trigger": "上涨+3%后加仓", "quantity": "约X股"}
-      ],
-      "reason": "建仓理由（来自信号 justification）"
+      "batches": [{"batch": 1, "pct_of_total": 0.5, "trigger": "条件", "quantity": "约X股"}],
+      "reason": "建仓理由"
     }
   ],
   "risk_notes": ["风险提示1", "风险提示2"]
 }
 
-━━━ 计算规则 ━━━
-- suggested_quantity = position_size_pct × 用户各仓位的 cost_basis 之和 / 当前价（取整）
-- 若无法获得总资金，用单个资产 cost_basis 估算
-- new_opportunities：遍历所有信号，找出 action=long 且 bias≥0.55 但用户尚无持仓的资产
-- action=short 但持仓为 long → 平仓，urgency=urgent
-- 止损已触及 → 立即平仓，urgency=urgent"""
+注意：
+- current_action 为"持有"或"观察"时，entry_plan 可省略
+- 确保所有数字为数值类型，不要加引号
+- 只返回 JSON，不要包裹在 markdown 代码块中"""
 
 
 def _fetch_risk_overlay() -> str:
@@ -175,39 +166,33 @@ def generate_advice(positions: List[dict], signals: dict, model_override: Option
     # 获取 Polymarket 宏观风险环境
     risk_context = _fetch_risk_overlay()
 
-    # 分离新鲜信号和过期信号
-    fresh_signals = {}
-    stale_signals = {}
+    clean_signals = {}
+    stale_assets = []
     for k, sig in signals.items():
         if not sig or not sig.get("action"):
             continue
         clean = {key: v for key, v in sig.items() if key != "raw"}
         if sig.get("is_stale"):
-            stale_signals[k] = clean
-        else:
-            fresh_signals[k] = clean
+            clean["⚠️STALE"] = True
+            stale_assets.append(k)
+        clean_signals[k] = clean
 
-    stale_warning = ""
-    if stale_signals:
-        stale_assets = ", ".join(stale_signals.keys())
-        stale_warning = (
-            f"\n\n⚠️ 以下资产的信号已超过 48 小时未更新（{stale_assets}），"
-            f"时效性存疑。对这些资产的操作建议必须降低确信度，urgency 降级为 low，"
-            "并在 reason 中注明'信号已过期，请核实后再操作'。\n"
+    signals_section = json.dumps(clean_signals, ensure_ascii=False, indent=2)
+
+    parts = [
+        f"当前持仓：\n{json.dumps(positions, ensure_ascii=False, indent=2)}",
+        f"大模型金融分析系统最新信号：\n{signals_section}",
+    ]
+    if stale_assets:
+        parts.append(
+            f"⚠️ 过期警告：以下资产信号已超过 48 小时未更新，时效性存疑：{', '.join(stale_assets)}。"
+            f"对这些资产的操作 urgency 必须降级为 low。"
         )
-
-    risk_section = ""
     if risk_context:
-        risk_section = f"\n\n{risk_context}\n\n⚠️ 请根据上述 Polymarket 宏观风险信号调整建议：\n- 若 regime=defensive：所有建仓量 × 仓位系数，止损收紧 1 ATR，urgency 非 urgent 的新建仓改为 low\n- 若 regime=hawkish：growth 类建仓量 × 仓位系数，偏好 value 类资产\n- 仓位系数直接乘以 position_size_pct\n"
+        parts.append(f"Polymarket 宏观风险环境：\n{risk_context}")
+    parts.append("请给出调仓建议。")
 
-    signals_section = json.dumps({**fresh_signals, **stale_signals}, ensure_ascii=False, indent=2)
-
-    user_content = f"""当前持仓：
-{json.dumps(positions, ensure_ascii=False, indent=2)}
-
-大模型金融分析系统最新信号：
-{signals_section}{stale_warning}{risk_section}
-请给出调仓建议。"""
+    user_content = "\n\n".join(parts)
 
     model = _get_model(model_override)
     client = _get_client(model)
