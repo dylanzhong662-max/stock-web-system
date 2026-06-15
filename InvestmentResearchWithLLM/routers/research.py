@@ -13,6 +13,7 @@ import backtest_simulation
 import parameter_sensitivity
 import consistency_test
 import neglect_weight_optimizer
+import scaling_advisor
 
 router = APIRouter()
 _chain = ChainAnalyzer()
@@ -310,3 +311,24 @@ async def get_optimal_weights(
         report_type=report_type,
         since_days=since_days,
     )
+
+
+# ---------------------------------------------------------------------------
+# 盈利加仓评估
+# ---------------------------------------------------------------------------
+
+@router.get("/scaling")
+async def get_scaling_advice():
+    """评估所有开仓持仓的盈利加仓条件。
+
+    基于 ATR 倒金字塔规则：浮盈≥1ATR + 价格>MA5 + 无放量上影 + 建仓<5天。
+    返回每个持仓的详细评估和操作建议。
+    """
+    results = await scaling_advisor.evaluate_scaling()
+    eligible = [r for r in results if r.get("eligible")]
+    return {
+        "total_positions": len(results),
+        "eligible_count": len(eligible),
+        "positions": results,
+        "summary": scaling_advisor.format_scaling_context(results),
+    }

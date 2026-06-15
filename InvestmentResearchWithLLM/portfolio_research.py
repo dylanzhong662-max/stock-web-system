@@ -10,7 +10,8 @@ import report_generator
 import predictions
 import transaction_costs
 import watchlist
-from llm_client import get_client, resolve_model, is_deepseek
+import scaling_advisor
+from llm_client import get_client, resolve_model, has_reasoning, build_extra_params
 from company_analyzer import CompanyAnalyzer
 
 _PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "portfolio_research.md")
@@ -42,6 +43,7 @@ def _read_positions() -> list[dict]:
 class PortfolioResearch:
     def __init__(self):
         self._company = CompanyAnalyzer()
+        self._scaling_context = ""
 
     async def analyze(self, model: str | None = None) -> tuple[str, list[dict]]:
         model = resolve_model(model)
@@ -50,7 +52,7 @@ class PortfolioResearch:
             return "暂无开仓持仓，无法生成报告。", []
 
         tickers = [p["ticker"] for p in positions]
-        enriched, rag_results, tavily_results = await asyncio.gather(
+        enriched, rag_results, tavily_results, scaling_results = await asyncio.gather(
             self._enrich_positions(positions),
             rag_client.search_news(
                 query=" ".join(tickers) + " portfolio risk earnings outlook",
@@ -62,7 +64,9 @@ class PortfolioResearch:
                 " ".join(tickers[:6]) + " earnings outlook risk 2025",
                 max_results=6,
             ),
+            scaling_advisor.evaluate_scaling(),
         )
+        self._scaling_context = scaling_advisor.format_scaling_context(scaling_results)
         rag_context = self._build_news_context(rag_results, tavily_results)
         prompt = self._build_prompt(enriched, rag_context)
 
@@ -92,7 +96,7 @@ class PortfolioResearch:
             return
 
         tickers = [p["ticker"] for p in positions]
-        enriched, rag_results, tavily_results = await asyncio.gather(
+        enriched, rag_results, tavily_results, scaling_results = await asyncio.gather(
             self._enrich_positions(positions),
             rag_client.search_news(
                 query=" ".join(tickers) + " portfolio risk earnings outlook",
@@ -104,7 +108,9 @@ class PortfolioResearch:
                 " ".join(tickers[:6]) + " earnings outlook risk 2025",
                 max_results=6,
             ),
+            scaling_advisor.evaluate_scaling(),
         )
+        self._scaling_context = scaling_advisor.format_scaling_context(scaling_results)
         rag_context = self._build_news_context(rag_results, tavily_results)
         prompt = self._build_prompt(enriched, rag_context)
 
@@ -255,16 +261,50 @@ class PortfolioResearch:
             factor_str = self._fmt_factors(p.get("factor_data"))
             atr_str = self._fmt_atr(p.get("atr_data"), p.get("entry_price"))
             fetch_note = fin.get("fetched_at", data_fetch_ts)
+
+            cur_price = fin.get("current_price")
+            cur_price_str = f"{cur_price:.2f}" if cur_price else "N/A"
+            change_pct = fin.get("change_pct")
+            change_str = f"{change_pct:+.2f}%" if change_pct is not None else ""
+            vol_ratio = fin.get("vol_ratio")
+            vol_str = f"成交量/均量={vol_ratio:.1f}x" if vol_ratio else ""
+            ma50 = fin.get("ma50")
+            ma200 = fin.get("ma200")
+            ma_str = ""
+            if ma50 or ma200:
+                parts = []
+                if ma50:
+                    parts.append(f"MA50={ma50:.2f}")
+                if ma200:
+                    parts.append(f"MA200={ma200:.2f}")
+                ma_str = " | ".join(parts)
+            target = fin.get("analyst_target")
+            target_str = f"分析师目标价={target:.2f}" if target else ""
+            div_yield = fin.get("div_yield")
+            div_str = f"股息率={div_yield:.2%}" if div_yield else ""
+
+            gm = fin.get("gross_margin")
+            gm_str = f"{gm:.1%}" if gm is not None else "N/A"
+            pe_fwd = fin.get("pe_forward")
+            pe_fwd_str = f"{pe_fwd:.1f}" if pe_fwd is not None else "N/A"
+            pe_ttm = fin.get("pe_ttm")
+            pe_ttm_str = f"{pe_ttm:.1f}" if pe_ttm is not None else "N/A"
+            rev_g = fin.get("revenue_growth")
+            rev_str = f"{rev_g:.1%}" if rev_g is not None else "N/A"
+
             lines.append(
                 f"- **{p['ticker']}** ({p.get('asset_name', '')}): "
-                f"成本 {p.get('entry_price', 'N/A')} | 盈亏 {pnl_str} | "
+                f"现价 {cur_price_str} {change_str} | 成本 {p.get('entry_price', 'N/A')} | 盈亏 {pnl_str} | "
                 f"Beta {beta_str} | "
                 f"因子暴露: {factor_str} | "
                 f"ATR止损位: {atr_str} | "
-                f"毛利率 {fin.get('gross_margin', 'N/A')} | "
-                f"Forward PE {fin.get('pe_forward', 'N/A')} | "
-                f"营收增速 {fin.get('revenue_growth', 'N/A')} | "
-                f"财务数据抓取时间: {fetch_note}"
+                f"PE(TTM) {pe_ttm_str} | Forward PE {pe_fwd_str} | "
+                f"毛利率 {gm_str} | 营收增速 {rev_str} | "
+                + (f"{vol_str} | " if vol_str else "")
+                + (f"{ma_str} | " if ma_str else "")
+                + (f"{target_str} | " if target_str else "")
+                + (f"{div_str} | " if div_str else "")
+                + f"财务数据抓取时间: {fetch_note}"
             )
 
         positions_text = "\n".join(lines)
@@ -278,6 +318,9 @@ class PortfolioResearch:
         costs_data = transaction_costs.estimate_portfolio_costs(positions)
         costs_text = transaction_costs.format_cost_section(costs_data)
 
+        # 盈利加仓评估
+        scaling_ctx = self._scaling_context or ""
+
         # 监控清单上下文
         watchlist_ctx = watchlist.build_watchlist_context()
 
@@ -289,6 +332,7 @@ class PortfolioResearch:
             .replace("{correlation_matrix}", corr_text)
             .replace("{rag_news_context}", rag_text)
             .replace("{transaction_costs}", costs_text)
+            .replace("{scaling_context}", scaling_ctx)
             .replace("{watchlist_context}", watchlist_ctx)
         )
         if "{portfolio_factor_exposure}" in rendered:
@@ -434,12 +478,15 @@ class PortfolioResearch:
             max_tokens=12000,
             temperature=0.3,
             stream=True,
+            **build_extra_params(model),
         )
 
         stream = await get_client(model).chat.completions.create(**kwargs)
         async for chunk in stream:
+            if not chunk.choices:
+                continue
             delta = chunk.choices[0].delta
-            if is_deepseek(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
                 continue
             if delta.content:
                 yield delta.content

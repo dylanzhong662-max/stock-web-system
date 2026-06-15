@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Optional
 
 import predictions as pred_mod
-from llm_client import get_client, resolve_model, is_deepseek
+from llm_client import get_client, resolve_model, has_reasoning, build_extra_params
 
 
 _DEFAULT_N_RUNS = 3
@@ -37,12 +37,15 @@ async def _run_single_analysis(
         max_tokens=20000,
         temperature=0.3,
         stream=True,
+        **build_extra_params(model),
     )
     chunks = []
     stream = await get_client(model).chat.completions.create(**kwargs)
     async for chunk in stream:
+        if not chunk.choices:
+            continue
         delta = chunk.choices[0].delta
-        if is_deepseek(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
+        if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
             continue
         if delta.content:
             chunks.append(delta.content)

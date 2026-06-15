@@ -1,4 +1,4 @@
-"""价格序列：AKShare / FMP / Alpha Vantage 日线 + Kenneth French 因子"""
+"""价格序列：FMP 日线（主）+ AKShare fallback + Kenneth French 因子"""
 import os
 import asyncio
 import io
@@ -25,9 +25,47 @@ _ff_factor_cache: dict[str, "object"] = {}
 _FF_DATA_URL = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip"
 _MOM_DATA_URL = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip"
 
+_fmp_price_sem = asyncio.Semaphore(5)
+
+
+async def _get_fmp_daily(ticker: str) -> dict:
+    """FMP historical-price-eod — Starter plan 无严格限速"""
+    fmp_sym = fmp_ticker(ticker)
+    if not fmp_sym:
+        return {}
+
+    fmp_key = os.getenv("FMP_API_KEY", "")
+    if not fmp_key:
+        return {}
+
+    async with _fmp_price_sem:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.get(
+                    f"{_FMP_BASE}/stable/historical-price-eod/full",
+                    params={"symbol": fmp_sym, "apikey": fmp_key},
+                )
+                data = r.json() if r.status_code == 200 else []
+        except Exception:
+            data = []
+
+    if not isinstance(data, list):
+        return {}
+
+    series: dict[str, float] = {}
+    for row in data:
+        date = row.get("date")
+        close = row.get("close")
+        if date and close is not None:
+            try:
+                series[date] = float(close)
+            except (TypeError, ValueError):
+                continue
+    return series
+
 
 async def _get_akshare_daily(ticker: str) -> dict:
-    """AKShare 日线（新浪数据源，无 key、国内直连、免费）"""
+    """AKShare 日线 fallback（新浪数据源，无 key）"""
     fmp_sym = fmp_ticker(ticker)
     if not fmp_sym:
         return {}
@@ -56,7 +94,7 @@ async def _get_akshare_daily(ticker: str) -> dict:
 async def get_av_daily(ticker: str, outputsize: str = "full") -> dict:
     """日线价格 → {date: close}，24h 缓存。
 
-    数据源优先级：AKShare > FMP fallback
+    数据源优先级：FMP > AKShare
     进程级去重：并发请求同一 ticker 只打一次外部 API
     """
     fmp_sym = fmp_ticker(ticker)
@@ -80,32 +118,10 @@ async def get_av_daily(ticker: str, outputsize: str = "full") -> dict:
     _av_daily_inflight[fmp_sym] = fut
 
     try:
-        series = await _get_akshare_daily(ticker)
+        series = await _get_fmp_daily(ticker)
 
         if not series:
-            fmp_key = os.getenv("FMP_API_KEY", "")
-            if fmp_key:
-                try:
-                    async with httpx.AsyncClient(timeout=30.0) as c:
-                        r = await c.get(
-                            f"{_FMP_BASE}/stable/historical-price-eod/full",
-                            params={"symbol": fmp_sym, "apikey": fmp_key},
-                        )
-                        data = r.json() if r.status_code == 200 else []
-                except Exception:
-                    data = []
-                if isinstance(data, list):
-                    fmp_series: dict[str, float] = {}
-                    for row in data:
-                        date = row.get("date")
-                        close = row.get("adjClose") or row.get("close")
-                        if date and close is not None:
-                            try:
-                                fmp_series[date] = float(close)
-                            except (TypeError, ValueError):
-                                continue
-                    if fmp_series:
-                        series = fmp_series
+            series = await _get_akshare_daily(ticker)
 
         if series:
             price_cache_set(fmp_sym, series)

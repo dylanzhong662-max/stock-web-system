@@ -366,52 +366,56 @@ async def get_correlation_matrix(tickers: list[str], period: str = "3y") -> dict
 
 
 async def _get_fmp_ohlc(ticker: str, days: int = 100) -> list[dict]:
-    """OHLC 数据，优先 AKShare，fallback FMP"""
+    """OHLC 数据，FMP 优先，AKShare fallback"""
     fmp_sym = fmp_ticker(ticker)
     if not fmp_sym:
         return []
     if fmp_sym in _ohlc_mem_cache:
         return _ohlc_mem_cache[fmp_sym]
 
-    def _ak_sync():
+    result = []
+    fmp_key = os.getenv("FMP_API_KEY", "")
+    if fmp_key:
         try:
-            import akshare as ak
-            df = ak.stock_us_daily(symbol=fmp_sym, adjust="qfq")
-            if df is None or df.empty:
-                return []
-            rows = []
-            for _, r in df.tail(days).iterrows():
-                date = r["date"]
-                date_str = date.strftime("%Y-%m-%d") if hasattr(date, "strftime") else str(date)[:10]
-                try:
-                    rows.append({
-                        "date":  date_str,
-                        "high":  float(r["high"]),
-                        "low":   float(r["low"]),
-                        "close": float(r["close"]),
-                    })
-                except (TypeError, ValueError, KeyError):
-                    continue
-            return list(reversed(rows))
+            async with httpx.AsyncClient(timeout=20.0) as c:
+                r = await c.get(
+                    f"{_FMP_BASE}/stable/historical-price-eod/full",
+                    params={"symbol": fmp_sym, "apikey": fmp_key},
+                )
+                data = r.json() if r.status_code == 200 else []
         except Exception:
-            return []
+            data = []
+        if isinstance(data, list):
+            result = data[: max(days, 50)]
 
-    result = await asyncio.get_event_loop().run_in_executor(None, _ak_sync)
-
-    if not result:
-        fmp_key = os.getenv("FMP_API_KEY", "")
-        if fmp_key:
+    if result:
+        # FMP returns descending (newest first) — reverse to ascending for ATR/MA calcs
+        result = list(reversed(result))
+    else:
+        def _ak_sync():
             try:
-                async with httpx.AsyncClient(timeout=20.0) as c:
-                    r = await c.get(
-                        f"{_FMP_BASE}/stable/historical-price-eod/full",
-                        params={"symbol": fmp_sym, "apikey": fmp_key},
-                    )
-                    data = r.json() if r.status_code == 200 else []
+                import akshare as ak
+                df = ak.stock_us_daily(symbol=fmp_sym, adjust="qfq")
+                if df is None or df.empty:
+                    return []
+                rows = []
+                for _, r in df.tail(days).iterrows():
+                    date = r["date"]
+                    date_str = date.strftime("%Y-%m-%d") if hasattr(date, "strftime") else str(date)[:10]
+                    try:
+                        rows.append({
+                            "date":  date_str,
+                            "high":  float(r["high"]),
+                            "low":   float(r["low"]),
+                            "close": float(r["close"]),
+                        })
+                    except (TypeError, ValueError, KeyError):
+                        continue
+                return rows  # already ascending from iterrows()
             except Exception:
-                data = []
-            if isinstance(data, list):
-                result = data[: max(days, 50)]
+                return []
+
+        result = await asyncio.get_event_loop().run_in_executor(None, _ak_sync)
 
     _ohlc_mem_cache[fmp_sym] = result
     return result
@@ -437,7 +441,7 @@ async def get_atr_stops(
                 "date":  pd.Timestamp(r["date"]),
                 "high":  float(r["high"]),
                 "low":   float(r["low"]),
-                "close": float(r.get("adjClose") or r["close"]),
+                "close": float(r["close"]),
             })
         except (KeyError, ValueError, TypeError):
             continue

@@ -102,6 +102,9 @@ POST /api/research/watchlist                手动添加监控项
 DELETE /api/research/watchlist/{id}          停用监控项
 PUT  /api/research/watchlist/{id}/value     更新观测值
 
+# 盈利加仓评估（2026-06 新增）
+GET  /api/research/scaling                  ATR倒金字塔加仓条件评估（自动读持仓）
+
 # 策略验证（2026-05 新增）
 POST /api/research/backtest                 Walk-forward 回测，body: {"industry": "AI算力", "n_months": 6}
 POST /api/research/sensitivity              参数敏感性分析，body: {"industry": "半导体"}

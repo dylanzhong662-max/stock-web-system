@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>交易分析 - Trade Analytics</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  :root {
+    --blue-brand: #1456F0;
+    --blue-act:   #3370FF;
+    --blue-light: #EEF3FF;
+    --bg:         #F5F6F8;
+    --card:       #FFFFFF;
+    --border:     #E0E3EA;
+    --text:       #1D2129;
+    --text-2:     #4E5969;
+    --text-3:     #8D93A5;
+    --success:    #00B42A;
+    --danger:     #F53F3F;
+    --warning:    #FF7D00;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  .container { max-width: 1200px; margin: 0 auto; }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  h1::before {
+    content: '';
+    width: 32px; height: 32px;
+    background: var(--blue-brand);
+    border-radius: 8px;
+    display: inline-block;
+  }
+
+  /* Upload area */
+  .upload-zone {
+    background: var(--card);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-bottom: 24px;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--blue-act);
+    background: var(--blue-light);
+  }
+  .upload-zone p { color: var(--text-2); margin-top: 8px; }
+  .upload-zone .icon { font-size: 40px; margin-bottom: 8px; }
+  .upload-zone input { display: none; }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+    border: 1px solid var(--border);
+  }
+  .card h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text);
+  }
+
+  /* KPI grid */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+  }
+  .kpi-item {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px 16px;
+  }
+  .kpi-item .label {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-bottom: 4px;
+  }
+  .kpi-item .value {
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .kpi-item .value.positive { color: var(--success); }
+  .kpi-item .value.negative { color: var(--danger); }
+  .kpi-item .value.warning { color: var(--warning); }
+
+  /* Symbol table */
+  .sym-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  .sym-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: var(--bg);
+    color: var(--text-2);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+  }
+  .sym-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sym-table tr:hover td { background: var(--blue-light); }
+
+  /* PnL curve */
+  .pnl-chart {
+    width: 100%;
+    height: 200px;
+    position: relative;
+    overflow: hidden;
+  }
+  .pnl-chart canvas { width: 100%; height: 100%; }
+
+  /* Review section */
+  .review-content {
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--text);
+  }
+  .review-content h3 { margin: 16px 0 8px; color: var(--blue-brand); }
+  .review-content ul { padding-left: 20px; }
+  .review-content li { margin-bottom: 4px; }
+  .review-content strong { color: var(--danger); }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-primary {
+    background: var(--blue-brand);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--blue-act); }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Loading */
+  .loading {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-2);
+    font-size: 14px;
+    margin: 12px 0;
+  }
+  .loading.active { display: flex; }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--blue-brand);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Open positions */
+  .pos-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .pos-chip {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .pos-chip .sym { font-weight: 600; margin-right: 6px; }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>交易分析 Trade Analytics</h1>
+
+  <!-- Upload -->
+  <div class="upload-zone" id="dropZone">
+    <div class="icon">&#128200;</div>
+    <div><strong>上传嘉信 (Schwab) CSV 交易记录</strong></div>
+    <p>拖拽文件到此处，或点击选择文件</p>
+    <input type="file" id="fileInput" accept=".csv">
+  </div>
+
+  <!-- Loading -->
+  <div class="loading" id="uploadLoading">
+    <div class="spinner"></div>
+    <span>解析交易记录中...</span>
+  </div>
+
+  <!-- Results -->
+  <div id="results" class="hidden">
+    <!-- Summary KPIs -->
+    <div class="card">
+      <h2>核心指标</h2>
+      <div class="kpi-grid" id="kpiGrid"></div>
+    </div>
+
+    <!-- Holding time -->
+    <div class="card">
+      <h2>持仓时间分析</h2>
+      <div class="kpi-grid" id="holdingGrid"></div>
+    </div>
+
+    <!-- By Symbol -->
+    <div class="card">
+      <h2>按标的分析</h2>
+      <div style="overflow-x: auto;">
+        <table class="sym-table" id="symTable">
+          <thead>
+            <tr>
+              <th>标的</th>
+              <th>交易次数</th>
+              <th>胜率</th>
+              <th>总盈亏</th>
+              <th>平均盈亏%</th>
+              <th>平均持仓天数</th>
+              <th>总投入资金</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Open positions -->
+    <div class="card">
+      <h2>未平仓持仓</h2>
+      <div class="pos-chips" id="openPositions"></div>
+    </div>
+
+    <!-- PnL Curve -->
+    <div class="card">
+      <h2>累计盈亏曲线</h2>
+      <div class="pnl-chart">
+        <canvas id="pnlCanvas"></canvas>
+      </div>
+    </div>
+
+    <!-- LLM Review -->
+    <div class="card">
+      <h2>AI 交易诊断</h2>
+      <button class="btn btn-primary" id="reviewBtn" onclick="requestReview()">生成 DeepSeek R1 诊断报告</button>
+      <div class="loading" id="reviewLoading">
+        <div class="spinner"></div>
+        <span>DeepSeek R1 正在分析，约需 30 秒...</span>
+      </div>
+      <div class="review-content" id="reviewContent"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files.length) uploadFile(e.target.files[0]);
+});
+
+async function uploadFile(file) {
+  document.getElementById('uploadLoading').classList.add('active');
+  document.getElementById('results').classList.add('hidden');
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch('/api/trades/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (data.error) {
+      alert(data.error);
+      return;
+    }
+    renderResults(data);
+  } catch (err) {
+    alert('上传失败: ' + err.message);
+  } finally {
+    document.getElementById('uploadLoading').classList.remove('active');
+  }
+}
+
+function renderResults(data) {
+  const { analytics } = data;
+  document.getElementById('results').classList.remove('hidden');
+
+  // KPIs
+  const s = analytics.summary;
+  const kpis = [
+    { label: '总交易次数', value: s.total_trades, cls: '' },
+    { label: '胜率', value: s.win_rate + '%', cls: s.win_rate >= 50 ? 'positive' : 'negative' },
+    { label: 'Profit Factor', value: s.profit_factor, cls: s.profit_factor >= 1.0 ? 'positive' : 'negative' },
+    { label: '期望值/笔', value: '$' + s.expectancy_per_trade, cls: s.expectancy_per_trade >= 0 ? 'positive' : 'negative' },
+    { label: '总盈亏', value: '$' + s.total_pnl, cls: s.total_pnl >= 0 ? 'positive' : 'negative' },
+    { label: '平均盈利', value: '$' + s.avg_win + ' (' + s.avg_win_pct + '%)', cls: 'positive' },
+    { label: '平均亏损', value: '$' + s.avg_loss + ' (' + s.avg_loss_pct + '%)', cls: 'negative' },
+    { label: '最大连续亏损', value: s.max_consecutive_losses + '笔', cls: s.max_consecutive_losses >= 5 ? 'negative' : '' },
+  ];
+  document.getElementById('kpiGrid').innerHTML = kpis.map(k =>
+    `<div class="kpi-item"><div class="label">${k.label}</div><div class="value ${k.cls}">${k.value}</div></div>`
+  ).join('');
+
+  // Holding time
+  const h = analytics.holding_time;
+  const holds = [
+    { label: '平均持仓(全部)', value: h.avg_all_days + '天', cls: '' },
+    { label: '盈利交易持仓', value: h.avg_winners_days + '天', cls: 'positive' },
+    { label: '亏损交易持仓', value: h.avg_losers_days + '天', cls: h.avg_losers_days > h.avg_winners_days ? 'warning' : '' },
+  ];
+  document.getElementById('holdingGrid').innerHTML = holds.map(k =>
+    `<div class="kpi-item"><div class="label">${k.label}</div><div class="value ${k.cls}">${k.value}</div></div>`
+  ).join('');
+
+  // Symbol table
+  const tbody = document.querySelector('#symTable tbody');
+  const syms = Object.entries(analytics.by_symbol).sort((a, b) => b[1].total_pnl_usd - a[1].total_pnl_usd);
+  tbody.innerHTML = syms.map(([sym, d]) => {
+    const pnlCls = d.total_pnl_usd >= 0 ? 'positive' : 'negative';
+    const wrCls = d.win_rate >= 0.5 ? 'positive' : d.win_rate === 0 ? 'negative' : 'warning';
+    return `<tr>
+      <td><strong>${sym}</strong></td>
+      <td>${d.trades}</td>
+      <td class="${wrCls}">${(d.win_rate * 100).toFixed(0)}%</td>
+      <td class="${pnlCls}">$${d.total_pnl_usd.toFixed(2)}</td>
+      <td class="${d.avg_pnl_pct >= 0 ? 'positive' : 'negative'}">${d.avg_pnl_pct.toFixed(1)}%</td>
+      <td>${d.avg_holding_days}</td>
+      <td>$${d.total_capital_deployed.toFixed(0)}</td>
+    </tr>`;
+  }).join('');
+
+  // Open positions
+  const posDiv = document.getElementById('openPositions');
+  const positions = Object.entries(analytics.open_positions);
+  if (positions.length) {
+    posDiv.innerHTML = positions.map(([sym, d]) =>
+      `<div class="pos-chip"><span class="sym">${sym}</span>${d.quantity}股 @ $${d.avg_cost.toFixed(2)} = $${d.total_invested.toFixed(0)}</div>`
+    ).join('');
+  } else {
+    posDiv.innerHTML = '<span style="color:var(--text-3)">无未平仓持仓</span>';
+  }
+
+  // PnL curve
+  drawPnlCurve(analytics.pnl_curve);
+}
+
+function drawPnlCurve(curve) {
+  const canvas = document.getElementById('pnlCanvas');
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * 2;
+  canvas.height = rect.height * 2;
+  ctx.scale(2, 2);
+  const W = rect.width, H = rect.height;
+
+  if (!curve || !curve.length) return;
+
+  const values = curve.map(p => p.cumulative);
+  const maxVal = Math.max(...values, 0);
+  const minVal = Math.min(...values, 0);
+  const range = maxVal - minVal || 1;
+  const pad = 40;
+
+  // Zero line
+  const zeroY = pad + (maxVal / range) * (H - 2 * pad);
+  ctx.strokeStyle = var_css('--border');
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(pad, zeroY);
+  ctx.lineTo(W - pad, zeroY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Draw line
+  ctx.beginPath();
+  ctx.strokeStyle = values[values.length - 1] >= 0 ? var_css('--success') : var_css('--danger');
+  ctx.lineWidth = 2;
+  for (let i = 0; i < values.length; i++) {
+    const x = pad + (i / (values.length - 1)) * (W - 2 * pad);
+    const y = pad + ((maxVal - values[i]) / range) * (H - 2 * pad);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Fill area
+  ctx.lineTo(pad + ((values.length - 1) / (values.length - 1)) * (W - 2 * pad), zeroY);
+  ctx.lineTo(pad, zeroY);
+  ctx.closePath();
+  ctx.fillStyle = values[values.length - 1] >= 0 ? 'rgba(0,180,42,0.08)' : 'rgba(245,63,63,0.08)';
+  ctx.fill();
+
+  // Labels
+  ctx.fillStyle = var_css('--text-2');
+  ctx.font = '11px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('$' + maxVal.toFixed(0), 2, pad - 4);
+  ctx.fillText('$' + minVal.toFixed(0), 2, H - pad + 14);
+  ctx.fillText('$0', 2, zeroY - 4);
+
+  // Date labels
+  ctx.textAlign = 'center';
+  const first = curve[0].date;
+  const last = curve[curve.length - 1].date;
+  ctx.fillText(first, pad, H - 4);
+  ctx.fillText(last, W - pad, H - 4);
+
+  // Final value
+  const finalVal = values[values.length - 1];
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillStyle = finalVal >= 0 ? var_css('--success') : var_css('--danger');
+  ctx.fillText('$' + finalVal.toFixed(2), W - pad, pad - 4);
+}
+
+function var_css(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+async function requestReview() {
+  const btn = document.getElementById('reviewBtn');
+  const loading = document.getElementById('reviewLoading');
+  const content = document.getElementById('reviewContent');
+
+  btn.disabled = true;
+  loading.classList.add('active');
+  content.innerHTML = '';
+
+  try {
+    const resp = await fetch('/api/trades/review/stream', { method: 'POST' });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let md = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value);
+      const lines = text.split('\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const payload = line.slice(6);
+          if (payload === '[DONE]') break;
+          try {
+            const obj = JSON.parse(payload);
+            if (obj.content) {
+              md += obj.content;
+              content.innerHTML = marked.parse(md);
+            }
+          } catch {}
+        }
+      }
+    }
+  } catch (err) {
+    content.innerHTML = '<p style="color:var(--danger)">请求失败: ' + err.message + '</p>';
+  } finally {
+    btn.disabled = false;
+    loading.classList.remove('active');
+  }
+}
+</script>
+</body>
+</html>

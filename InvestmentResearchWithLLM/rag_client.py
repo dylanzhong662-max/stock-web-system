@@ -22,7 +22,7 @@ async def search_news(
     data_types: list[str] | None = None,
     top_k: int = 5,
     min_importance: float = 0.3,
-    hours: int = 72,
+    hours: int = 168,
 ) -> list[dict]:
     """语义检索 RAG 新闻，返回 chunk 列表，失败时返回 []（静默降级）
 

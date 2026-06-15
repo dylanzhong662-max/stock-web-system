@@ -21,10 +21,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routers import chat, research
+from routers import chat, research, trades
 
 app.include_router(chat.router,     prefix="/api/chat",     tags=["chat"])
 app.include_router(research.router, prefix="/api/research", tags=["research"])
+app.include_router(trades.router,   prefix="/api/trades",   tags=["trades"])
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -37,6 +38,11 @@ def index():
     if os.path.exists(index_file):
         return FileResponse(index_file)
     return {"message": "行业投研助手", "docs": "/docs"}
+
+
+@app.get("/trades")
+def trades_page():
+    return FileResponse(os.path.join(STATIC_DIR, "trades.html"))
 
 
 @app.get("/api/health")
