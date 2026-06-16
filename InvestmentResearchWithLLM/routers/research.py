@@ -5,6 +5,7 @@ from typing import Optional
 from chain_analyzer import ChainAnalyzer
 from company_analyzer import CompanyAnalyzer
 from portfolio_research import PortfolioResearch
+from technical_analyzer import TechnicalAnalyzer
 import predictions as predictions_mod
 import prediction_analytics
 import watchlist as watchlist_mod
@@ -19,6 +20,7 @@ router = APIRouter()
 _chain = ChainAnalyzer()
 _company = CompanyAnalyzer()
 _portfolio = PortfolioResearch()
+_technical = TechnicalAnalyzer()
 
 
 class ChainRequest(BaseModel):
@@ -45,6 +47,37 @@ async def research_company(req: CompanyRequest):
 async def research_portfolio():
     report, positions = await _portfolio.analyze()
     return {"report": report, "positions": positions}
+
+
+# ---------------------------------------------------------------------------
+# 技术分析
+# ---------------------------------------------------------------------------
+
+class TechnicalRequest(BaseModel):
+    ticker: str
+    model: Optional[str] = None
+
+
+@router.post("/technical")
+async def research_technical(req: TechnicalRequest):
+    """技术分析：多维度指标计算 + LLM 综合研判（趋势/动量/结构/Fibonacci）"""
+    report, indicators = await _technical.analyze(req.ticker, model=req.model)
+    return {"report": report, "indicators": indicators}
+
+
+@router.post("/technical/portfolio")
+async def research_technical_portfolio(model: Optional[str] = None):
+    """持仓技术面综合分析：对每个持仓计算指标 + LLM 综合研判"""
+    report, indicators = await _technical.analyze_portfolio(model=model)
+    return {"report": report, "positions_count": len(indicators)}
+
+
+@router.get("/technical/indicators")
+async def technical_indicators(
+    ticker: str = Query(..., description="股票代码，如 NVDA"),
+):
+    """仅返回计算指标（不调 LLM），轻量快速"""
+    return await _technical.quick_indicators(ticker)
 
 
 @router.get("/reports")

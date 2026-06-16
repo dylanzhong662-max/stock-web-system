@@ -75,6 +75,7 @@ deepseek-reasoner 响应约 30-60 秒，max_tokens 按模块设置：chain=8000�
 | chain | 24h | 行业名称（如 "AI算力"） |
 | company | 6h | ticker 大写（如 "NVDA"） |
 | portfolio | 1h | "latest" |
+| technical | 4h | ticker 大写（如 "NVDA"） |
 
 缓存存在 `data/reports.db` 的 `reports` 表，过期自动失效。
 
@@ -102,6 +103,10 @@ POST /api/research/watchlist                手动添加监控项
 DELETE /api/research/watchlist/{id}          停用监控项
 PUT  /api/research/watchlist/{id}/value     更新观测值
 
+# 技术分析（2026-06 新增）
+POST /api/research/technical                技术分析报告（多维度指标+LLM研判），body: {"ticker": "NVDA"}
+GET  /api/research/technical/indicators?ticker=NVDA  仅返回计算指标（不调LLM，快速）
+
 # 盈利加仓评估（2026-06 新增）
 GET  /api/research/scaling                  ATR倒金字塔加仓条件评估（自动读持仓）
 
@@ -116,11 +121,12 @@ GET  /api/research/weights                  因子权重优化状态（IC-weight
 
 ## 意图路由逻辑
 
-orchestrator 调 deepseek-v4-pro 识别意图，返回 `{"intent": "chain|company|portfolio|compare|qa", "entities": [...]}`：
+orchestrator 调 deepseek-v4-pro 识别意图，返回 `{"intent": "chain|company|portfolio|compare|technical|qa", "entities": [...]}`：
 
 - `chain` → ChainAnalyzer，entities[0] 为行业名
 - `company` → CompanyAnalyzer，entities[0] 为 ticker/公司名
 - `compare` → CompanyAnalyzer × 2，entities[0] 和 [1]
+- `technical` → TechnicalAnalyzer，entities[0] 为 ticker/公司名（如"NVDA技术面"、"走势分析"）
 - `portfolio` → PortfolioResearch，无需 entities
 - `qa` → deepseek-v4-pro 直接流式回答
 

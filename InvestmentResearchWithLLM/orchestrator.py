@@ -6,17 +6,20 @@ from llm_client import get_client, resolve_model, is_deepseek, is_qwen
 from chain_analyzer import ChainAnalyzer
 from company_analyzer import CompanyAnalyzer
 from portfolio_research import PortfolioResearch
+from technical_analyzer import TechnicalAnalyzer
 import rag_client
 import report_generator
 
 _INTENT_PROMPT = """你是一个投研意图识别器。根据用户输入，返回 JSON，格式严格如下：
-{"intent": "<chain|company|portfolio|compare|qa>", "entities": ["实体1", "实体2"]}
+{"intent": "<chain|company|portfolio|compare|technical|portfolio_technical|qa>", "entities": ["实体1", "实体2"]}
 
 意图说明：
 - chain：分析某个行业/产业链（如"分析AI算力产业链"）
 - company：分析某家公司或股票代码（如"分析英伟达"、"NVDA在哪一层"）
 - portfolio：用户询问自己持仓相关（如"我的持仓哪些值得加仓"）
 - compare：对比两家公司（如"比较NVDA和AMD"）
+- technical：技术分析/走势分析/K线/趋势/支撑阻力（如"NVDA技术面"、"特斯拉走势分析"、"BTC技术分析"、"苹果的支撑位在哪"）
+- portfolio_technical：持仓技术面分析/持仓走势（如"持仓技术面"、"我的持仓走势怎么样"、"持仓技术分析"）
 - qa：其他通用问题
 
 只返回 JSON，不要任何解释。"""
@@ -27,6 +30,7 @@ class Orchestrator:
         self._chain = ChainAnalyzer()
         self._company = CompanyAnalyzer()
         self._portfolio = PortfolioResearch()
+        self._technical = TechnicalAnalyzer()
 
     async def _detect_intent(self, message: str, model: str) -> dict:
         # 意图识别用轻量模型：deepseek 系列用 v4-pro，qwen 系列用 flash，其余用传入模型
@@ -71,6 +75,14 @@ class Orchestrator:
                 yield "---\n\n"
                 async for chunk in self._company.stream(ticker, model):
                     yield chunk
+
+        elif intent == "technical" and entities:
+            async for chunk in self._technical.stream(entities[0], model):
+                yield chunk
+
+        elif intent == "portfolio_technical":
+            async for chunk in self._technical.stream_portfolio(model):
+                yield chunk
 
         elif intent == "portfolio":
             async for chunk in self._portfolio.stream(model):
