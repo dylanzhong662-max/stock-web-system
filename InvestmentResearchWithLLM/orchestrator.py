@@ -2,7 +2,7 @@ import json
 import hashlib
 from typing import AsyncGenerator
 
-from llm_client import get_client, resolve_model, is_deepseek, is_qwen
+from llm_client import get_client, resolve_model, is_qwen, stream_chat
 from chain_analyzer import ChainAnalyzer
 from company_analyzer import CompanyAnalyzer
 from portfolio_research import PortfolioResearch
@@ -33,13 +33,12 @@ class Orchestrator:
         self._technical = TechnicalAnalyzer()
 
     async def _detect_intent(self, message: str, model: str) -> dict:
-        # 意图识别用轻量模型：deepseek 系列用 v4-pro，qwen 系列用 flash，其余用传入模型
-        if is_deepseek(model):
-            intent_model = "deepseek-v4-pro"
-        elif is_qwen(model):
+        # 意图识别统一用轻量模型：deepseek/其余模型用 v4-pro，qwen 系列用 flash
+        # 不能直接用传入的 model（如 claude-sonnet-5 等推理模型不支持 temperature 参数会 400）
+        if is_qwen(model):
             intent_model = "qwen3.6-flash"
         else:
-            intent_model = model
+            intent_model = "deepseek-v4-pro"
         resp = await get_client(intent_model).chat.completions.create(
             model=intent_model,
             messages=[
@@ -107,26 +106,18 @@ class Orchestrator:
         if rag_context:
             system_content += f"\n\n【实时新闻参考（RAG 检索）】\n{rag_context}\n\n请在回答中注明引用的新闻来源和时间。"
 
-        from llm_client import build_extra_params, has_reasoning
-        stream = await get_client(model).chat.completions.create(
+        chunks = []
+        async for text in stream_chat(
             model=model,
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": message},
             ],
-            stream=True,
-            **build_extra_params(model),
-        )
-        chunks = []
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                continue
-            if delta.content:
-                chunks.append(delta.content)
-                yield delta.content
+            max_tokens=8000,
+            temperature=0.3,
+        ):
+            chunks.append(text)
+            yield text
 
         if chunks:
             report_generator.save_cache("qa", cache_key, "".join(chunks), model)

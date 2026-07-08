@@ -26,6 +26,7 @@ _FF_DATA_URL = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_
 _MOM_DATA_URL = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip"
 
 _fmp_price_sem = asyncio.Semaphore(5)
+_SSL_VERIFY = os.getenv("SSL_VERIFY", "1") != "0"
 
 
 async def _get_fmp_daily(ticker: str) -> dict:
@@ -40,7 +41,7 @@ async def _get_fmp_daily(ticker: str) -> dict:
 
     async with _fmp_price_sem:
         try:
-            async with httpx.AsyncClient(timeout=30.0) as c:
+            async with httpx.AsyncClient(timeout=30.0, verify=_SSL_VERIFY) as c:
                 r = await c.get(
                     f"{_FMP_BASE}/stable/historical-price-eod/full",
                     params={"symbol": fmp_sym, "apikey": fmp_key},

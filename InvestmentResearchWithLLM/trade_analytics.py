@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 
 import data_fetcher
-from llm_client import get_client, resolve_model, has_reasoning, build_extra_params
+from llm_client import resolve_model, stream_chat
 
 
 @dataclass
@@ -262,24 +262,14 @@ async def generate_review(analytics: dict, model: str | None = None) -> str:
     model = resolve_model(model)
     prompt = _build_review_prompt(analytics)
 
-    client = get_client(model)
     chunks = []
-    stream = await client.chat.completions.create(
+    async for text in stream_chat(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=6000,
         temperature=0.3,
-        stream=True,
-        **build_extra_params(model),
-    )
-    async for chunk in stream:
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta
-        if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
-            continue
-        if delta.content:
-            chunks.append(delta.content)
+    ):
+        chunks.append(text)
     return "".join(chunks)
 
 

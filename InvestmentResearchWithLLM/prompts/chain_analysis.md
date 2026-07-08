@@ -163,12 +163,6 @@
 
 ## 参考信息
 
-### 搜索结果（含原文链接，引用数字时请注明来源标题）
-
-{search_results}
-
----
-
 ### 代表性公司财务数据（来自 yfinance / FMP，为 ground truth，优先用于财务数字引用）
 
 {financial_data}
@@ -178,6 +172,12 @@
 ### 国际 Neglect-Alpha 候选标的（量化筛选结果，用于第9问B部分）
 
 {neglect_candidates}
+
+---
+
+### 搜索结果（已压缩摘要，含原文链接，引用数字时请注明来源标题）
+
+{search_results}
 
 ---
 

@@ -54,28 +54,18 @@ async def trade_review_stream(model: Optional[str] = Query(None)):
     if not _last_analytics:
         return {"error": "请先调用 /api/trades/upload 上传 CSV"}
 
-    from llm_client import get_client, resolve_model, has_reasoning, build_extra_params
+    from llm_client import resolve_model, stream_chat
     model = resolve_model(model)
     prompt = trade_analytics._build_review_prompt(_last_analytics)
 
     async def event_stream():
-        client = get_client(model)
-        stream = await client.chat.completions.create(
+        async for text in stream_chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=6000,
             temperature=0.3,
-            stream=True,
-            **build_extra_params(model),
-        )
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                continue
-            if delta.content:
-                yield f"data: {json.dumps({'content': delta.content})}\n\n"
+        ):
+            yield f"data: {json.dumps({'content': text})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

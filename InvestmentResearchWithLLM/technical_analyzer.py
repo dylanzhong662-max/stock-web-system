@@ -15,7 +15,7 @@ import pandas as pd
 
 from data_providers.quant import _get_fmp_ohlc
 from data_providers.ticker_utils import fmp_ticker
-from llm_client import get_client, resolve_model, build_extra_params, has_reasoning
+from llm_client import resolve_model, stream_chat, complete_chat
 from scaling_advisor import _read_open_positions
 import rag_client
 import report_generator
@@ -747,14 +747,12 @@ class TechnicalAnalyzer:
             atr_value=atr_val,
         )
 
-        from llm_client import get_client, build_extra_params, has_reasoning
-        resp = await get_client(model).chat.completions.create(
+        content = await complete_chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            **build_extra_params(model),
+            max_tokens=8000,
+            temperature=0.3,
         )
-
-        content = resp.choices[0].message.content or ""
         content = report_generator.format_report(content, source_note="FMP/AKShare OHLCV")
 
         report_generator.save_cache(CACHE_TYPE, cache_key, content, model)
@@ -812,23 +810,15 @@ class TechnicalAnalyzer:
             atr_value=atr_val,
         )
 
-        stream_resp = await get_client(model).chat.completions.create(
+        chunks = []
+        async for text in stream_chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            stream=True,
-            **build_extra_params(model),
-        )
-
-        chunks = []
-        async for chunk in stream_resp:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                continue
-            if delta.content:
-                chunks.append(delta.content)
-                yield delta.content
+            max_tokens=8000,
+            temperature=0.3,
+        ):
+            chunks.append(text)
+            yield text
 
         if chunks:
             full = "".join(chunks)
@@ -913,13 +903,12 @@ class TechnicalAnalyzer:
         prompt_template = self._load_portfolio_prompt()
         prompt = prompt_template.format(positions_technical_data=positions_technical_data)
 
-        resp = await get_client(model).chat.completions.create(
+        content = await complete_chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            **build_extra_params(model),
+            max_tokens=16000,
+            temperature=0.3,
         )
-
-        content = resp.choices[0].message.content or ""
         content = report_generator.format_report(content, source_note="FMP/AKShare OHLCV")
         report_generator.save_cache(CACHE_TYPE, "portfolio", content, model)
 
@@ -979,23 +968,15 @@ class TechnicalAnalyzer:
         prompt_template = self._load_portfolio_prompt()
         prompt = prompt_template.format(positions_technical_data=positions_technical_data)
 
-        stream_resp = await get_client(model).chat.completions.create(
+        chunks = []
+        async for text in stream_chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            stream=True,
-            **build_extra_params(model),
-        )
-
-        chunks = []
-        async for chunk in stream_resp:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                continue
-            if delta.content:
-                chunks.append(delta.content)
-                yield delta.content
+            max_tokens=16000,
+            temperature=0.3,
+        ):
+            chunks.append(text)
+            yield text
 
         if chunks:
             full = "".join(chunks)

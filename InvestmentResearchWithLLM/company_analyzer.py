@@ -5,7 +5,7 @@ from typing import AsyncGenerator
 import data_fetcher
 import rag_client
 import report_generator
-from llm_client import get_client, resolve_model, has_reasoning, build_extra_params
+from llm_client import resolve_model, stream_chat
 
 _PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "company_analysis.md")
 
@@ -62,7 +62,7 @@ class CompanyAnalyzer:
             chunks.append(chunk)
         content = "".join(chunks)
 
-        report = report_generator.format_report(content, f"FMP + yfinance + Tavily + {model}")
+        report = report_generator.format_report(content, f"FMP Starter + Tavily + {model}")
         report_generator.save_cache("company", ticker.upper(), report, model)
         return report, financial
 
@@ -82,7 +82,7 @@ class CompanyAnalyzer:
             yield chunk
 
         content = "".join(chunks)
-        report = report_generator.format_report(content, f"FMP + yfinance + Tavily + {model}")
+        report = report_generator.format_report(content, f"FMP Starter + Tavily + {model}")
         report_generator.save_cache("company", ticker.upper(), report, model)
 
     async def _fetch_data(self, ticker: str) -> tuple[dict, list[dict]]:
@@ -117,21 +117,10 @@ class CompanyAnalyzer:
         return financial, combined
 
     async def _stream(self, prompt: str, model: str) -> AsyncGenerator[str, None]:
-        kwargs: dict = dict(
+        async for text in stream_chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=8000,
             temperature=0.3,
-            stream=True,
-            **build_extra_params(model),
-        )
-
-        stream = await get_client(model).chat.completions.create(**kwargs)
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                continue
-            if delta.content:
-                yield delta.content
+        ):
+            yield text

@@ -9,7 +9,9 @@ from data_providers.intl_screener import screen_neglected_growth, format_neglect
 import rag_client
 import report_generator
 import predictions
-from llm_client import get_client, resolve_model, has_reasoning, build_extra_params
+from data_preprocessor import summarize_search_results, filter_neglect_by_sector
+from grounding_verifier import verify_report
+from llm_client import resolve_model, stream_chat
 
 _PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "chain_analysis.md")
 
@@ -170,6 +172,9 @@ class ChainAnalyzer:
         ]
         all_results = rag_converted + results_cn + results_en
 
+        # 压缩搜索结果（800→150 chars），降低注意力稀释
+        all_results = await summarize_search_results(all_results)
+
         # P2: detect ticker symbols, validate via yfinance (market_cap presence = real company)
         tickers = _extract_tickers(all_results)
         fin_data: list[dict] = []
@@ -192,6 +197,9 @@ class ChainAnalyzer:
         except Exception:
             neglect_candidates = []
 
+        # 行业过滤：只保留与目标行业匹配的 neglect 候选
+        neglect_candidates = filter_neglect_by_sector(industry, neglect_candidates)
+
         return all_results, fin_data, neglect_candidates
 
     async def analyze(self, industry: str, model: str | None = None) -> tuple[str, bool]:
@@ -204,14 +212,20 @@ class ChainAnalyzer:
         prompt = self._load_prompt(industry, all_results, fin_data, neglect_candidates)
 
         chunks: list[str] = []
-        async for chunk in self._stream(prompt, model):
+        async for chunk in self._stream(prompt, model, fin_data, neglect_candidates):
             chunks.append(chunk)
         content = "".join(chunks)
+
+        # Grounding verification
+        verification = verify_report(content, fin_data)
+        if verification["markdown_section"]:
+            content += verification["markdown_section"]
 
         n_neglect = len(neglect_candidates)
         source_note = (
             f"Tavily × {len(all_results)} 条 + yfinance × {len(fin_data)} 只"
             f" + 国际筛选 × {n_neglect} 只 + {model}"
+            f" | 可信度 {verification['credibility_score']:.0%}"
         )
         report = report_generator.format_report(content, source_note)
         report_generator.save_cache("chain", industry, report, model)
@@ -239,15 +253,23 @@ class ChainAnalyzer:
         prompt = self._load_prompt(industry, all_results, fin_data, neglect_candidates)
 
         chunks: list[str] = []
-        async for chunk in self._stream(prompt, model):
+        async for chunk in self._stream(prompt, model, fin_data, neglect_candidates):
             chunks.append(chunk)
             yield chunk
 
         content = "".join(chunks)
+
+        # Grounding verification
+        verification = verify_report(content, fin_data)
+        if verification["markdown_section"]:
+            yield verification["markdown_section"]
+            content += verification["markdown_section"]
+
         n_neglect = len(neglect_candidates)
         source_note = (
             f"Tavily × {len(all_results)} 条 + yfinance × {len(fin_data)} 只"
             f" + 国际筛选 × {n_neglect} 只 + {model}"
+            f" | 可信度 {verification['credibility_score']:.0%}"
         )
         report = report_generator.format_report(content, source_note)
         report_generator.save_cache("chain", industry, report, model)
@@ -262,21 +284,22 @@ class ChainAnalyzer:
         except Exception:
             pass
 
-    async def _stream(self, prompt: str, model: str) -> AsyncGenerator[str, None]:
-        kwargs: dict = dict(
+    async def _stream(
+        self,
+        prompt: str,
+        model: str,
+        fin_data: list[dict] | None = None,
+        neglect_candidates: list[dict] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        # Dynamic max_tokens based on input complexity
+        n_fin = len(fin_data) if fin_data else 0
+        n_neglect = len(neglect_candidates) if neglect_candidates else 0
+        dynamic_tokens = min(24000, 12000 + n_neglect * 500 + n_fin * 300)
+
+        async for text in stream_chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=20000,
+            max_tokens=dynamic_tokens,
             temperature=0.3,
-            stream=True,
-            **build_extra_params(model),
-        )
-        stream = await get_client(model).chat.completions.create(**kwargs)
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                continue
-            if delta.content:
-                yield delta.content
+        ):
+            yield text

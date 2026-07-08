@@ -11,7 +11,9 @@ import predictions
 import transaction_costs
 import watchlist
 import scaling_advisor
-from llm_client import get_client, resolve_model, has_reasoning, build_extra_params
+from portfolio_rules import compute_deterministic_conclusions, compute_stress_scenarios
+from grounding_verifier import verify_report
+from llm_client import resolve_model, stream_chat
 from company_analyzer import CompanyAnalyzer
 
 _PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "portfolio_research.md")
@@ -71,13 +73,21 @@ class PortfolioResearch:
         prompt = self._build_prompt(enriched, rag_context)
 
         chunks = []
-        async for chunk in self._stream(prompt, model):
+        async for chunk in self._stream(prompt, model, len(enriched)):
             chunks.append(chunk)
         content = "".join(chunks)
 
-        report = report_generator.format_report(
-            content, f"holderAndAction trading.db + FMP + Tavily + {model}"
+        # Grounding verification
+        ground_truth = [p.get("financial", {}) for p in enriched if p.get("financial")]
+        verification = verify_report(content, ground_truth)
+        if verification["markdown_section"]:
+            content += verification["markdown_section"]
+
+        source_note = (
+            f"holderAndAction trading.db + FMP Starter + Tavily + {model}"
+            f" | 可信度 {verification['credibility_score']:.0%}"
         )
+        report = report_generator.format_report(content, source_note)
         report_generator.save_cache("portfolio", "latest", report, model)
         await self._save_predictions(content, enriched)
         return report, enriched
@@ -115,14 +125,24 @@ class PortfolioResearch:
         prompt = self._build_prompt(enriched, rag_context)
 
         chunks = []
-        async for chunk in self._stream(prompt, model):
+        async for chunk in self._stream(prompt, model, len(enriched)):
             chunks.append(chunk)
             yield chunk
 
         content = "".join(chunks)
-        report = report_generator.format_report(
-            content, f"holderAndAction trading.db + FMP + Tavily + {model}"
+
+        # Grounding verification
+        ground_truth = [p.get("financial", {}) for p in enriched if p.get("financial")]
+        verification = verify_report(content, ground_truth)
+        if verification["markdown_section"]:
+            yield verification["markdown_section"]
+            content += verification["markdown_section"]
+
+        source_note = (
+            f"holderAndAction trading.db + FMP Starter + Tavily + {model}"
+            f" | 可信度 {verification['credibility_score']:.0%}"
         )
+        report = report_generator.format_report(content, source_note)
         report_generator.save_cache("portfolio", "latest", report, model)
         await self._save_predictions(content, enriched)
 
@@ -279,9 +299,17 @@ class PortfolioResearch:
                     parts.append(f"MA200={ma200:.2f}")
                 ma_str = " | ".join(parts)
             target = fin.get("analyst_target")
-            target_str = f"分析师目标价={target:.2f}" if target else ""
+            target_str = ""
+            if target:
+                target_str = f"分析师目标价={target:.2f}"
+                a_high = fin.get("analyst_high")
+                a_low = fin.get("analyst_low")
+                if a_high and a_low:
+                    target_str += f"(区间{a_low:.0f}-{a_high:.0f})"
             div_yield = fin.get("div_yield")
             div_str = f"股息率={div_yield:.2%}" if div_yield else ""
+            dcf = fin.get("dcf")
+            dcf_str = f"DCF估值={dcf:.2f}" if dcf else ""
 
             gm = fin.get("gross_margin")
             gm_str = f"{gm:.1%}" if gm is not None else "N/A"
@@ -291,6 +319,8 @@ class PortfolioResearch:
             pe_ttm_str = f"{pe_ttm:.1f}" if pe_ttm is not None else "N/A"
             rev_g = fin.get("revenue_growth")
             rev_str = f"{rev_g:.1%}" if rev_g is not None else "N/A"
+            eps_g = fin.get("eps_growth")
+            eps_str = f"{eps_g:.1%}" if eps_g is not None else "N/A"
 
             lines.append(
                 f"- **{p['ticker']}** ({p.get('asset_name', '')}): "
@@ -299,12 +329,13 @@ class PortfolioResearch:
                 f"因子暴露: {factor_str} | "
                 f"ATR止损位: {atr_str} | "
                 f"PE(TTM) {pe_ttm_str} | Forward PE {pe_fwd_str} | "
-                f"毛利率 {gm_str} | 营收增速 {rev_str} | "
+                f"毛利率 {gm_str} | 营收增速 {rev_str} | EPS增速 {eps_str} | "
                 + (f"{vol_str} | " if vol_str else "")
                 + (f"{ma_str} | " if ma_str else "")
                 + (f"{target_str} | " if target_str else "")
+                + (f"{dcf_str} | " if dcf_str else "")
                 + (f"{div_str} | " if div_str else "")
-                + f"财务数据抓取时间: {fetch_note}"
+                + f"财务数据来源: FMP | 抓取时间: {fetch_note}"
             )
 
         positions_text = "\n".join(lines)
@@ -324,6 +355,10 @@ class PortfolioResearch:
         # 监控清单上下文
         watchlist_ctx = watchlist.build_watchlist_context()
 
+        # Pre-LLM deterministic conclusions + stress test
+        deterministic = compute_deterministic_conclusions(positions)
+        stress = compute_stress_scenarios(positions)
+
         rendered = (
             template
             .replace("{positions_data}", positions_text)
@@ -334,6 +369,8 @@ class PortfolioResearch:
             .replace("{transaction_costs}", costs_text)
             .replace("{scaling_context}", scaling_ctx)
             .replace("{watchlist_context}", watchlist_ctx)
+            .replace("{deterministic_conclusions}", deterministic)
+            .replace("{stress_test_scenarios}", stress)
         )
         if "{portfolio_factor_exposure}" in rendered:
             rendered = rendered.replace("{portfolio_factor_exposure}", portfolio_factor_str)
@@ -407,7 +444,7 @@ class PortfolioResearch:
             valid += 1
 
         if total_weight == 0 or valid == 0:
-            return "N/A（无可用多因子数据，可能 yfinance 429）"
+            return "N/A（无可用多因子数据）"
 
         avgs = {k: v / total_weight for k, v in factor_sums.items()}
         # 组合风格解读
@@ -471,22 +508,14 @@ class PortfolioResearch:
             )
         return ""
 
-    async def _stream(self, prompt: str, model: str) -> AsyncGenerator[str, None]:
-        kwargs: dict = dict(
+    async def _stream(self, prompt: str, model: str, n_positions: int = 5) -> AsyncGenerator[str, None]:
+        # Dynamic max_tokens based on position count
+        dynamic_tokens = min(32000, 4000 + n_positions * 1500)
+
+        async for text in stream_chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=12000,
+            max_tokens=dynamic_tokens,
             temperature=0.3,
-            stream=True,
-            **build_extra_params(model),
-        )
-
-        stream = await get_client(model).chat.completions.create(**kwargs)
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if has_reasoning(model) and hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                continue
-            if delta.content:
-                yield delta.content
+        ):
+            yield text
